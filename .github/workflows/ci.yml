@@ -3,6 +3,27 @@ on: [push, pull_request]
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: meetless
+          POSTGRES_USER: meetless
+          POSTGRES_PASSWORD: meetless
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U meetless -d meetless"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: [6379:6379]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -10,9 +31,13 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - run: npm ci
+      - run: npm run db:generate
       - run: npm run lint
       - run: npm run test
       - run: npm run build
+      env:
+        DATABASE_URL: postgresql://meetless:meetless@localhost:5432/meetless
+        REDIS_URL: redis://localhost:6379
   docker:
     runs-on: ubuntu-latest
     needs: lint-and-test

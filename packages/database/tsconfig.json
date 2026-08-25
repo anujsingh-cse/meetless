@@ -14,10 +14,6 @@
     "composite": true,
     "outDir": "dist",
     "rootDir": "src",
-    "baseUrl": ".",
-    "paths": {
-      "@meetless/shared/*": ["../../packages/shared/dist/*"]
-    },
     "tsBuildInfoFile": "dist/tsbuildinfo"
   },
   "include": ["src/**/*"],
