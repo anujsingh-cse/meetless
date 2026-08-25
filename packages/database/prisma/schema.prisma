@@ -1,0 +1,108 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  clerkId       String    @unique
+  email         String    @unique
+  name          String?
+  avatarUrl     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  memberships   Membership[]
+  sessions      Session[]
+}
+
+model Team {
+  id          String       @id @default(cuid())
+  name        String
+  slug        String       @unique
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  memberships Membership[]
+  workspaces  Workspace[]
+}
+
+model Membership {
+  id        String   @id @default(cuid())
+  userId    String
+  teamId    String
+  role      Role     @default(MEMBER)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  @@unique([userId, teamId])
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+model Workspace {
+  id          String    @id @default(cuid())
+  teamId      String
+  name        String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  team        Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  sessions    Session[]
+}
+
+model Session {
+  id          String       @id @default(cuid())
+  workspaceId String
+  userId      String
+  name        String
+  status      SessionStatus @default(ACTIVE)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agentActions AgentAction[]
+  conflicts   Conflict[]
+}
+
+enum SessionStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+model AgentAction {
+  id        String   @id @default(cuid())
+  sessionId String
+  agentId   String
+  tool      String
+  params    Json
+  result    Json?
+  timestamp DateTime @default(now())
+  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}
+
+model Conflict {
+  id        String         @id @default(cuid())
+  sessionId String
+  file      String
+  agents    String[]
+  changes   Json
+  status    ConflictStatus @default(PENDING)
+  createdAt DateTime       @default(now())
+  resolvedAt DateTime?
+  session   Session        @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}
+
+enum ConflictStatus {
+  PENDING
+  RESOLVED
+  IGNORED
+}
