@@ -10,6 +10,8 @@
       "outputs": ["coverage/**"]
     },
     "lint": {},
+    "db:generate": {},
+    "db:push": {},
     "db:migrate": {},
     "db:seed": {},
     "dev": {
