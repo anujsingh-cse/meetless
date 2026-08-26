@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
 
 const prisma = new PrismaClient()
@@ -30,6 +30,10 @@ describe('Connector Prisma models', () => {
 
   afterAll(async () => {
     await prisma.$disconnect()
+  })
+
+  beforeEach(async () => {
+    await prisma.connector.deleteMany()
   })
 
   afterEach(async () => {

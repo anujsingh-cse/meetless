@@ -64,6 +64,25 @@ describe('ClaudeCodeConnector', () => {
     expect(events[0].mcpEventId).toBe('mcp-1')
   })
 
+  it('normalizes real MCP wire format tools/call into NormalizedAgentEvent', () => {
+    const events: NormalizedAgentEvent[] = []
+    connector.onEvent(e => events.push(e))
+
+    connector['handleMCPMessage'](
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'tools/call',
+        id: 7,
+        params: { name: 'edit_file', arguments: { path: 'src/x.ts', content: 'y' } }
+      })
+    )
+
+    expect(events).toHaveLength(1)
+    expect(events[0].tool).toBe('edit_file')
+    expect(events[0].mcpEventId).toBe('7')
+    expect(events[0].connectorId).toBe('claude-code')
+  })
+
   it('disconnects and kills process', async () => {
     await connector.connect()
     const proc = connector['process']

@@ -61,6 +61,7 @@ export class ClaudeCodeConnector extends BaseConnector {
       this.process.kill('SIGTERM')
       this.process = null
     }
+    this.buffer = ''
   }
 
   async sendMCPEvent(event: MCPEvent): Promise<void> {
