@@ -45,6 +45,10 @@ export const conflictRoutes: FastifyPluginAsync = async (app) => {
     const { conflictId } = req.params as { conflictId: string }
     const body = req.body as ResolveBody
 
+    if (!['accept_agent', 'merge_manual', 'reject_changes'].includes(body.resolution)) {
+      return reply.status(400).send({ error: 'Invalid resolution' })
+    }
+
     const conflict = await app.prisma.conflict.findUnique({ where: { id: conflictId } })
     if (!conflict) return reply.code(404).send({ error: 'Conflict not found' })
 

@@ -9,6 +9,7 @@ interface PostEventBody {
   params: Record<string, unknown>
   result?: Record<string, unknown>
   connectorId: string
+  connectorName?: string
   connectorVersion: string
   mcpEventId: string
 }
@@ -31,6 +32,7 @@ const postEventBodySchema = {
     params: { type: 'object', additionalProperties: true },
     result: { type: 'object', additionalProperties: true },
     connectorId: { type: 'string' },
+    connectorName: { type: 'string' },
     connectorVersion: { type: 'string' },
     mcpEventId: { type: 'string' },
   },
@@ -82,6 +84,12 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
 
     const session = await app.prisma.session.findUnique({ where: { id: body.sessionId } })
     if (!session) return reply.code(400).send({ error: 'Invalid sessionId' })
+
+    await app.prisma.connector.upsert({
+      where: { id: body.connectorId },
+      update: { name: body.connectorName ?? body.connectorId, version: body.connectorVersion },
+      create: { id: body.connectorId, name: body.connectorName ?? body.connectorId, version: body.connectorVersion, capabilities: {} }
+    })
 
     const event = await app.prisma.normalizedEvent.create({
       data: {

@@ -1,8 +1,9 @@
 import type { NormalizedAgentEvent } from '../types/index.js'
+import type { ConnectorRegistry } from './registry.js'
 
 export interface IngestionPipelineOptions {
   apiBaseUrl: string
-  registry: { getAll(): Array<{ onEvent(handler: (event: NormalizedAgentEvent) => void): void }> }
+  registry: ConnectorRegistry
 }
 
 export class IngestionPipeline {
