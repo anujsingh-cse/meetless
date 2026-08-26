@@ -1,4 +1,5 @@
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
+import { Prisma } from '@prisma/client'
 import { ReconciliationEngine } from '../services/reconciliation.js'
 
 interface PostEventBody {
@@ -82,8 +83,8 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
         sessionId: body.sessionId,
         agentId: body.agentId,
         tool: body.tool,
-        params: body.params,
-        result: body.result ?? {},
+        params: body.params as unknown as Prisma.InputJsonValue,
+        result: (body.result ?? {}) as unknown as Prisma.InputJsonValue,
         connectorId: body.connectorId,
         connectorVersion: body.connectorVersion,
         mcpEventId: body.mcpEventId,
