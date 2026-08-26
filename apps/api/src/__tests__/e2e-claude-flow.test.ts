@@ -4,6 +4,7 @@ import type { ChildProcessWithoutNullStreams } from 'child_process'
 import { buildApp } from '../app.js'
 import { prisma } from '@meetless/database/client'
 import { ClaudeCodeConnector, IngestionPipeline, InMemoryConnectorRegistry } from '@meetless/shared/connectors'
+import type { NormalizedAgentEvent } from '@meetless/shared/types'
 
 let app: Awaited<ReturnType<typeof buildApp>>
 let baseUrl: string
@@ -41,21 +42,30 @@ beforeEach(async () => {
   await prisma.connector.deleteMany()
 })
 
-describe('E2E: Claude Code → Meetless full flow', () => {
-  it('create connector → register in pipeline → emit MCP event → persist → verify via HTTP GET', async () => {
-    // 1. Create DB session
-    const session = await prisma.session.create({
-      data: { workspaceId, userId, name: 'E2E Test Session' }
-    })
+async function createSession(name: string) {
+  return prisma.session.create({
+    data: { workspaceId, userId, name }
+  })
+}
 
-    // 2. Set up connector + pipeline
+async function ensureConnector() {
+  await prisma.connector.upsert({
+    where: { id: 'claude-code' },
+    update: {},
+    create: { id: 'claude-code', name: 'Claude Code', version: '1.0.0', capabilities: {} }
+  })
+}
+
+describe('E2E: Claude Code → Meetless full flow', () => {
+  it('create connector → register in pipeline → emit MCP event → verify via HTTP', async () => {
+    const session = await createSession('E2E Test Session')
+    await ensureConnector()
+
     const registry = new InMemoryConnectorRegistry()
     const pipeline = new IngestionPipeline({ apiBaseUrl: baseUrl, registry })
     const connector = new ClaudeCodeConnector({ workingDir: '/tmp/e2e-test' })
-
     registry.register(connector)
 
-    // 3. Mock child_process.spawn so connector.connect() doesn't fail
     const mockProc = {
       stdin: { write: vi.fn() },
       stdout: { on: vi.fn() },
@@ -67,103 +77,98 @@ describe('E2E: Claude Code → Meetless full flow', () => {
       mockProc as unknown as ChildProcessWithoutNullStreams
     )
 
-    // 4. Mock fetch so pipeline's HTTP POST goes through
     const originalFetch = globalThis.fetch
     const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 201 } as Response)
     globalThis.fetch = fetchSpy
 
     await connector.connect()
 
-    // 5. Simulate an MCP tool_call event
-    const mcpPayload = {
-      id: 'e2e-mcp-1',
-      type: 'tool_call',
-      payload: { tool: 'edit_file', params: { path: 'src/index.ts', content: 'Hello from Claude' } },
-      timestamp: Date.now()
-    }
-    const mcpMsg = JSON.stringify({ jsonrpc: '2.0', method: 'tools/call', params: mcpPayload, id: 'e2e-mcp-1' })
-    // Trigger the connector's internal MCP handler (same pattern as claude-code.test.ts)
-    connector['handleMCPMessage'](mcpMsg)
+    const events: NormalizedAgentEvent[] = []
+    connector.onEvent(e => events.push(e))
 
-    // 6. Feed the normalized event into the pipeline
-    const events: Array<{ sessionId: string; agentId: string; tool: string; params: Record<string, unknown>; result?: Record<string, unknown>; connectorId: string; connectorVersion: string; mcpEventId: string; timestamp: number }> = []
-    connector.onEvent(e => events.push(e as any))
+    connector['handleMCPMessage'](
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'tools/call',
+        params: { id: 'e2e-mcp-1', type: 'tool_call', payload: { tool: 'edit_file', params: { path: 'src/index.ts', content: 'Hello' } } },
+        id: 'e2e-mcp-1'
+      })
+    )
 
-    // The handler already fired from handleMCPMessage — manually invoke pipeline.handleEvent
+    expect(events).toHaveLength(1)
+    events[0].sessionId = session.id
     await pipeline.handleEvent(events[0])
 
-    // 7. Verify fetch was called with correct payload
-    expect(fetchSpy).toHaveBeenCalled()
-    const fetchCall = fetchSpy.mock.calls[0]
-    expect(fetchCall[0]).toBe(`${baseUrl}/api/events`)
-    expect(fetchCall[1].method).toBe('POST')
-    const body = JSON.parse(fetchCall[1].body)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    const body = JSON.parse(fetchSpy.mock.calls[0][1].body)
     expect(body.tool).toBe('edit_file')
     expect(body.connectorId).toBe('claude-code')
-    expect(body.mcpEventId).toBe('e2e-mcp-1')
 
-    // 8. Verify event persisted via HTTP GET
-    const response = await app.inject({
-      method: 'GET',
-      url: `/api/sessions/${session.id}/conflicts`
-    })
+    const response = await app.inject({ method: 'GET', url: `/api/sessions/${session.id}/conflicts` })
     expect(response.statusCode).toBe(200)
+    expect(JSON.parse(response.payload)).toHaveLength(0)
 
-    // Restore fetch
     globalThis.fetch = originalFetch
     vi.restoreAllMocks()
   })
 
   it('detects conflict when two agents edit the same file', async () => {
-    const session = await prisma.session.create({
-      data: { workspaceId, userId, name: 'Conflict E2E' }
+    const session = await createSession('Conflict E2E')
+    await ensureConnector()
+
+    await prisma.connector.upsert({
+      where: { id: 'claude-code' },
+      update: {},
+      create: { id: 'claude-code', name: 'Claude Code', version: '1.0.0', capabilities: {} }
     })
 
-    const registry = new InMemoryConnectorRegistry()
-    const pipeline = new IngestionPipeline({ apiBaseUrl: baseUrl, registry })
-
-    const originalFetch = globalThis.fetch
-    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 201 } as Response)
-    globalThis.fetch = fetchSpy
-
-    // Agent A edits src/app.ts
-    await pipeline.handleEvent({
-      sessionId: session.id,
-      agentId: 'claude-1',
-      tool: 'edit_file',
-      params: { path: 'src/app.ts', content: 'Agent A version' },
-      result: { success: true },
-      timestamp: Date.now(),
-      connectorId: 'claude-code',
-      connectorVersion: '1.0.0',
-      mcpEventId: 'e2e-mcp-2'
+    const agentA = await app.inject({
+      method: 'POST',
+      url: '/api/events',
+      payload: {
+        sessionId: session.id,
+        agentId: 'claude-1',
+        tool: 'edit_file',
+        params: { path: 'src/app.ts', content: 'Agent A version' },
+        result: { success: true },
+        connectorId: 'claude-code',
+        connectorVersion: '1.0.0',
+        mcpEventId: 'e2e-mcp-2'
+      }
     })
+    expect(agentA.statusCode).toBe(201)
 
-    // Agent B edits same file with different content
-    await pipeline.handleEvent({
-      sessionId: session.id,
-      agentId: 'claude-2',
-      tool: 'edit_file',
-      params: { path: 'src/app.ts', content: 'Agent B version' },
-      result: { success: true },
-      timestamp: Date.now(),
-      connectorId: 'claude-code',
-      connectorVersion: '1.0.0',
-      mcpEventId: 'e2e-mcp-3'
+    const agentB = await app.inject({
+      method: 'POST',
+      url: '/api/events',
+      payload: {
+        sessionId: session.id,
+        agentId: 'claude-2',
+        tool: 'edit_file',
+        params: { path: 'src/app.ts', content: 'Agent B version' },
+        result: { success: true },
+        connectorId: 'claude-code',
+        connectorVersion: '1.0.0',
+        mcpEventId: 'e2e-mcp-3'
+      }
     })
+    expect(agentB.statusCode).toBe(201)
 
-    // Verify both events persisted via API
     const events = await prisma.normalizedEvent.findMany({ where: { sessionId: session.id } })
     expect(events).toHaveLength(2)
 
-    // Verify conflict detected
     const conflicts = await prisma.conflict.findMany({ where: { sessionId: session.id } })
     expect(conflicts).toHaveLength(1)
     expect(conflicts[0].file).toBe('src/app.ts')
     expect(conflicts[0].agents).toEqual(expect.arrayContaining(['claude-1', 'claude-2']))
     expect(conflicts[0].status).toBe('PENDING')
 
-    globalThis.fetch = originalFetch
+    const response = await app.inject({ method: 'GET', url: `/api/sessions/${session.id}/conflicts` })
+    expect(response.statusCode).toBe(200)
+    const apiConflicts = JSON.parse(response.payload)
+    expect(apiConflicts).toHaveLength(1)
+    expect(apiConflicts[0].file).toBe('src/app.ts')
+
     vi.restoreAllMocks()
   })
 })

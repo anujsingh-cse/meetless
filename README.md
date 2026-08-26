@@ -27,4 +27,20 @@ Health check: GET http://localhost:3000/api/health
 | `npm run lint` | Lint all workspaces |
 | `npm run db:studio` | Open Prisma Studio |
 
-See [docs/architecture.md](docs/architecture.md) and [docs/development.md](docs/development.md).
+See [docs/architecture.md](docs/architecture.md), [docs/development.md](docs/development.md), and [docs/project-overview.md](docs/project-overview.md).
+
+## Phase 2A: Claude Code Connector
+
+Demo a full MCP connector → ingestion → conflict detection flow:
+
+```bash
+docker compose up -d          # Postgres + Redis
+npm ci
+npm run db:generate
+npm run db:push
+npm run demo --workspace=@meetless/api
+```
+
+The demo script (`apps/api/scripts/demo-claude-connector.ts`) starts a server, simulates two agents editing the same file, and verifies conflict detection via the API.
+
+See [apps/api/README.md](apps/api/README.md) for full API docs.

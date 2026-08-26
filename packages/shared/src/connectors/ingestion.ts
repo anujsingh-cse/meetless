@@ -17,7 +17,7 @@ export class IngestionPipeline {
 
   start(): void {
     for (const connector of this.registry.getAll()) {
-      connector.onEvent((event) => this.handleEvent(event))
+      connector.onEvent((event: NormalizedAgentEvent) => this.handleEvent(event))
     }
   }
 

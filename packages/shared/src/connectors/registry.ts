@@ -1,4 +1,5 @@
 import type { Connector, ConnectorRegistry } from '../types/connector.js'
+export type { ConnectorRegistry } from '../types/connector.js'
 
 export class InMemoryConnectorRegistry implements ConnectorRegistry {
   private connectors = new Map<string, Connector>()
