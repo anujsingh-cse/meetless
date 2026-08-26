@@ -108,4 +108,31 @@ describe('ReconciliationEngine', () => {
     const conflicts = await prisma.conflict.findMany({ where: { sessionId } })
     expect(conflicts).toHaveLength(0)
   })
+
+  it('does not create conflict when two agents write identical content', async () => {
+    const session2 = await createSession('Identical Content Test')
+    const sessionId2 = session2.id
+
+    await prisma.normalizedEvent.createMany({
+      data: [
+        { sessionId: sessionId2, agentId: 'claude-1', tool: 'edit_file', params: { path: 'src/foo.ts', content: 'same' }, result: {}, connectorId: 'claude-code', connectorVersion: '1.0', mcpEventId: 'm1', timestamp: new Date() },
+        { sessionId: sessionId2, agentId: 'claude-2', tool: 'edit_file', params: { path: 'src/foo.ts', content: 'same' }, result: {}, connectorId: 'claude-code', connectorVersion: '1.0', mcpEventId: 'm2', timestamp: new Date() }
+      ]
+    })
+
+    await engine.processSessionEvent({
+      sessionId: sessionId2,
+      agentId: 'claude-2',
+      tool: 'edit_file',
+      params: { path: 'src/foo.ts', content: 'same' },
+      result: {},
+      connectorId: 'claude-code',
+      connectorVersion: '1.0',
+      mcpEventId: 'm2',
+      timestamp: Date.now()
+    })
+
+    const conflicts = await prisma.conflict.findMany({ where: { sessionId: sessionId2 } })
+    expect(conflicts).toHaveLength(0)
+  })
 })
