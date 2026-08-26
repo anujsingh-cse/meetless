@@ -19,6 +19,11 @@
       "types": "./dist/types/index.d.ts",
       "import": "./dist/types/index.js",
       "require": "./dist/types/index.js"
+    },
+    "./connectors": {
+      "types": "./dist/connectors/index.d.ts",
+      "import": "./dist/connectors/index.js",
+      "require": "./dist/connectors/index.js"
     }
   },
   "scripts": {
