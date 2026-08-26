@@ -28,3 +28,6 @@ export interface Change {
   after: string
   range: { start: number; end: number }
 }
+
+export * from './events.js'
+export * from './connector.js'
