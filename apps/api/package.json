@@ -7,7 +7,8 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "test": "vitest run",
-    "lint": "eslint src --ext .ts"
+    "lint": "eslint src --ext .ts",
+    "demo": "npx tsx scripts/demo-claude-connector.ts"
   },
   "dependencies": {
     "@meetless/database": "*",
