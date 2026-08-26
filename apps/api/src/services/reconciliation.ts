@@ -8,9 +8,11 @@ interface FileEdit {
 
 export class ReconciliationEngine {
   private prisma: PrismaClient
+  private broadcaster?: (msg: unknown) => void
 
-  constructor(prisma: PrismaClient) {
+  constructor(prisma: PrismaClient, broadcaster?: (msg: unknown) => void) {
     this.prisma = prisma
+    this.broadcaster = broadcaster
   }
 
   async processSessionEvent(event: NormalizedAgentEvent): Promise<void> {
@@ -67,6 +69,15 @@ export class ReconciliationEngine {
         status: 'PENDING'
       }
     })
+
+    if (this.broadcaster) {
+      this.broadcaster({
+        type: 'conflict_created',
+        sessionId: event.sessionId,
+        file: filePath,
+        agents
+      })
+    }
   }
 
   getSessionConflicts(sessionId: string) {

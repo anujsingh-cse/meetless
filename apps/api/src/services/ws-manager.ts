@@ -46,6 +46,14 @@ export class WSManager {
     this.broadcastToSession(action.sessionId, { type: 'agent_action', payload: action }, action.agentId)
   }
 
+  broadcastConflict(sessionId: string, payload: unknown) {
+    this.broadcastToSession(sessionId, { type: 'conflict_created', payload })
+  }
+
+  broadcastConflictResolved(sessionId: string, conflictId: string, resolution: string) {
+    this.broadcastToSession(sessionId, { type: 'conflict_resolved', payload: { conflictId, resolution } })
+  }
+
   getSessionClients(sessionId: string): WSClient[] {
     const ids = this.sessionClients.get(sessionId)
     if (!ids) return []

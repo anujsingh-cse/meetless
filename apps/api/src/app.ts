@@ -6,6 +6,7 @@ import { authPlugin } from './plugins/auth.js'
 import { wsPlugin } from './plugins/websocket.js'
 import { healthRoutes } from './routes/health.js'
 import { eventRoutes } from './routes/events.js'
+import { conflictRoutes } from './routes/conflicts.js'
 
 export async function buildApp() {
   const app = Fastify({ logger: { level: config.LOG_LEVEL } })
@@ -15,5 +16,6 @@ export async function buildApp() {
   await app.register(wsPlugin)
   await app.register(healthRoutes, { prefix: '/api' })
   await app.register(eventRoutes, { prefix: '/api' })
+  await app.register(conflictRoutes, { prefix: '/api' })
   return app
 }

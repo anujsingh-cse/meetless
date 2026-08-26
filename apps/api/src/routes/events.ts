@@ -50,7 +50,12 @@ const conflictItemSchema = {
 } as const
 
 export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
-  const reconciliation = new ReconciliationEngine(app.prisma)
+  const reconciliation = new ReconciliationEngine(app.prisma, (msg: unknown) => {
+    const payload = msg as { type?: string; sessionId?: string; file?: string; agents?: string[] }
+    if (payload.sessionId) {
+      app.wsManager.broadcastConflict(payload.sessionId, payload)
+    }
+  })
 
   app.post('/events', {
     schema: {
