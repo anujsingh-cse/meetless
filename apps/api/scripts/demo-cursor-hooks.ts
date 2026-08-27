@@ -36,9 +36,12 @@ async function main() {
 
   await connector.connect()
   console.log(`Connector connected — bridge on port ${connector['bridge'].port}`)
-  console.log(`Secret: ${connector['secret']}`)
 
-  // 4. Simulate Cursor editing a file (via bridge)
+  // Wire the bridge → connector → pipeline → API path (as the real SDK would)
+  pipeline.start()
+  console.log('Pipeline started (bridge events forwarded to /api/events)')
+
+  // 4. Simulate Cursor editing a file (via bridge, the real Cursor hooks path)
   console.log('\nAgent A (Cursor) editing src/app.ts ...')
   const http = await import('http')
   const bridgePort = connector['bridge'].port

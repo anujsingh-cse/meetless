@@ -54,6 +54,28 @@ describe('IngestionPipeline', () => {
     )
   })
 
+  it('omits result from payload when result is null so the API schema accepts it', async () => {
+    const event: NormalizedAgentEvent = {
+      sessionId: 'sess-1',
+      agentId: 'cursor-1',
+      tool: 'edit_file',
+      params: { path: 'src/foo.ts', content: 'new' },
+      result: null,
+      timestamp: Date.now(),
+      connectorId: 'cursor-hooks',
+      connectorVersion: '1.0.0',
+      mcpEventId: 'mcp-999'
+    }
+
+    await pipeline.handleEvent(event)
+
+    expect(fetchSpy).toHaveBeenCalledOnce()
+    const bodyStr = fetchSpy.mock.calls[0][1].body as string
+    const parsed = JSON.parse(bodyStr)
+    expect(parsed).not.toHaveProperty('result')
+    expect(parsed.connectorId).toBe('cursor-hooks')
+  })
+
   it('logs warning and continues on non-2xx response', async () => {
     fetchSpy.mockResolvedValue({ ok: false, status: 500 })
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})

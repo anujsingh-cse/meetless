@@ -23,19 +23,23 @@ export class IngestionPipeline {
 
   async handleEvent(event: NormalizedAgentEvent): Promise<void> {
     try {
+      const payload: Record<string, unknown> = {
+        sessionId: event.sessionId,
+        agentId: event.agentId,
+        tool: event.tool,
+        params: event.params,
+      }
+      if (event.result !== null && event.result !== undefined) {
+        payload.result = event.result
+      }
+      payload.connectorId = event.connectorId
+      payload.connectorVersion = event.connectorVersion
+      payload.mcpEventId = event.mcpEventId
+
       const res = await fetch(`${this.apiBaseUrl}/api/events`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: event.sessionId,
-          agentId: event.agentId,
-          tool: event.tool,
-          params: event.params,
-          result: event.result,
-          connectorId: event.connectorId,
-          connectorVersion: event.connectorVersion,
-          mcpEventId: event.mcpEventId
-        })
+        body: JSON.stringify(payload)
       })
 
       if (!res.ok) {
