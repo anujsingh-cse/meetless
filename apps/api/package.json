@@ -8,7 +8,8 @@
     "start": "node dist/server.js",
     "test": "vitest run",
     "lint": "eslint src --ext .ts",
-    "demo": "npx tsx scripts/demo-claude-connector.ts"
+    "demo": "npx tsx scripts/demo-claude-connector.ts",
+    "demo:codex": "npx tsx scripts/demo-codex-connector.ts"
   },
   "dependencies": {
     "@meetless/database": "*",
