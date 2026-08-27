@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import http from 'http'
 import { BridgeServer } from '../bridge.js'
 import type { NormalizedAgentEvent } from '../../../types/index.js'
