@@ -40,6 +40,9 @@ npm run demo --workspace=@meetless/api
 
 # Run Codex demo (separate terminal)
 npm run demo:codex --workspace=@meetless/api
+
+# Run Cursor Hooks demo (separate terminal)
+npm run demo:cursor --workspace=@meetless/api
 ```
 
 ## Docker Workflow
@@ -77,6 +80,7 @@ See the existing `ClaudeCodeConnector` implementation for reference.
 |-----------|----|-------|--------|
 | Claude Code | `claude-code` | `edit_file`, `read_file`, `list_files`, `grep`, `todo_write`, `bash` | ✅ |
 | Codex CLI | `codex-cli` | `file_patch` → `edit_file`, `shell_exec` → `bash` | ✅ |
+| Cursor Hooks | `cursor-hooks` | `edit_file`, `read_file`, `list_files`, `grep`, `bash`, `subagent`, `mcp_tool`, `session_init`, `session_end` | ✅ |
 
 ## Workspace Packages
 
