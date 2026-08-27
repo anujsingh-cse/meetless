@@ -752,10 +752,9 @@ describe('MeetlessPlugin hook adapters', () => {
     expect(input.eventType).toBe('tool')
   })
 
-  it('builds input from file.edited event', () => {
-    const input = buildInputFromFileEvent({ type: 'file.edited', sessionID: 'sess-1', path: 'src/b.ts' } as any)
+  it('builds input from file.edited event using the real SDK shape (properties.file)', () => {
+    const input = buildInputFromFileEvent({ type: 'file.edited', properties: { file: 'src/b.ts' } } as any)
     expect(input.eventType).toBe('file')
-    expect(input.sessionId).toBe('sess-1')
     expect(input.filePath).toBe('src/b.ts')
   })
 
@@ -815,12 +814,18 @@ export function buildInputFromToolHook(
 }
 
 // Build an OpenCodeEventInput from the universal `event` hook (file.edited, etc.).
+// NOTE: the installed @opencode-ai/sdk shapes EventFileEdited as
+// { type: 'file.edited', properties: { file: string } } — the file path lives in
+// `properties.file` and there is NO sessionID on file.edited. Session context is
+// supplied by the plugin's current-session fallback (tracked from hooks that do
+// carry it), so forwarding works where session context is available.
 export function buildInputFromFileEvent(
-  event: { type?: string; sessionID?: string; path?: string }
+  event: { type?: string; sessionID?: string; path?: string; properties?: Record<string, unknown> }
 ): OpenCodeEventInput {
+  const props = event.properties as { file?: string; sessionID?: string } | undefined
   return {
-    sessionId: String(event.sessionID ?? ''),
-    filePath: event.path,
+    sessionId: String(event.sessionID ?? props?.sessionID ?? ''),
+    filePath: event.path ?? props?.file,
     eventType: event.type === 'file.edited' ? 'file' : 'tool',
   }
 }
@@ -855,8 +860,10 @@ class PathDeduper {
 export const MeetlessPlugin: Plugin = async (_ctx) => {
   const config = loadConfig(process.env as Record<string, string | undefined>)
   const deduper = new PathDeduper(1000)
+  let currentSession = ''
 
   async function forward(existing: OpenCodeEventInput): Promise<void> {
+    if (!existing.sessionId) existing = { ...existing, sessionId: currentSession }
     if (!existing.sessionId) return
     const normalized = normalizeOpenCodeEvent(existing, {
       connectorId: 'opencode',
@@ -871,9 +878,13 @@ export const MeetlessPlugin: Plugin = async (_ctx) => {
 
   return {
     async 'tool.execute.after'(input, output) {
+      if (input?.sessionID) currentSession = String(input.sessionID)
       await forward(buildInputFromToolHook(input as any, output as any))
     },
-    async event({ event }: { event: { type?: string; sessionID?: string; path?: string } }) {
+    async event({ event }: {
+      event?: { type?: string; sessionID?: string; path?: string; properties?: Record<string, unknown> }
+    }) {
+      if (event?.sessionID) currentSession = String(event.sessionID)
       if (event?.type === 'file.edited') {
         await forward(buildInputFromFileEvent(event as any))
       }
