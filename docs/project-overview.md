@@ -16,6 +16,7 @@ Meetless is a hosted reconciliation layer for AI coding agents (Claude Code, Cod
 |-----------|-------------|
 | **Connector abstraction** | `Connector` interface + `BaseConnector` abstract class + `ConnectorRegistry` for managing multiple agents |
 | **Claude Code connector** | Spawns Claude Code in MCP mode, normalizes `tools/call` JSON-RPC events into `NormalizedAgentEvent` |
+| **Codex CLI connector** | Spawns Codex CLI in MCP server mode, normalizes `file_patch` and `shell_exec` events from `codex/event` notifications |
 | **Ingestion pipeline** | Forwards connector events to the API via HTTP POST for persistence and reconciliation |
 | **Reconciliation engine** | Detects file-level conflicts when two agents edit the same file in a session |
 | **Conflict resolution API** | `POST /api/conflicts/:id/resolve` with `accept_agent`, `merge_manual`, `reject_changes` |
@@ -36,6 +37,9 @@ npm run dev                   # API at http://localhost:3000
 
 # Run demo (separate terminal)
 npm run demo --workspace=@meetless/api
+
+# Run Codex demo (separate terminal)
+npm run demo:codex --workspace=@meetless/api
 ```
 
 ## Docker Workflow
@@ -66,6 +70,13 @@ To add a new agent connector:
 4. Wire into `IngestionPipeline`
 
 See the existing `ClaudeCodeConnector` implementation for reference.
+
+### Available Connectors
+
+| Connector | ID | Tools | Status |
+|-----------|----|-------|--------|
+| Claude Code | `claude-code` | `edit_file`, `read_file`, `list_files`, `grep`, `todo_write`, `bash` | ✅ |
+| Codex CLI | `codex-cli` | `file_patch` → `edit_file`, `shell_exec` → `bash` | ✅ |
 
 ## Workspace Packages
 
