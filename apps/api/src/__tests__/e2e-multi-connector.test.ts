@@ -1,10 +1,8 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { buildApp } from '../app.js'
 import { prisma } from '@meetless/database/client'
-import { CodexCliConnector, ClaudeCodeConnector, IngestionPipeline, InMemoryConnectorRegistry } from '@meetless/shared/connectors'
 
 let app: Awaited<ReturnType<typeof buildApp>>
-let baseUrl: string
 const randSuffix = (): string => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
 let teamId: string
@@ -20,9 +18,7 @@ beforeAll(async () => {
   await app.ready()
   await app.listen({ port: 0 })
   const addr = app.server.address()
-  if (addr && typeof addr === 'object') {
-    baseUrl = `http://127.0.0.1:${addr.port}`
-  } else {
+  if (!addr || typeof addr !== 'object') {
     throw new Error('Server not listening')
   }
 })
