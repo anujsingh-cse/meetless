@@ -198,17 +198,15 @@ export default defineConfig({
 
 - [ ] **Step 4: Create the ESLint config**
 
+Follow the sibling package pattern (see `packages/shared/.eslintrc.cjs` and `apps/api/.eslintrc.cjs`): extend the repo-root config so environment, ignores, and `@typescript-eslint/recommended` (which sets `@typescript-eslint/no-unused-vars` to `error` with `argsIgnorePattern: '^_'`) are inherited consistently.
+
 ```js
 // packages/opencode-plugin/.eslintrc.cjs
 module.exports = {
   root: true,
-  extends: ['eslint:recommended', 'plugin:@typescript-eslint/recommended', 'prettier'],
-  parser: '@typescript-eslint/parser',
-  plugins: ['@typescript-eslint'],
-  parserOptions: { project: ['./tsconfig.json'] },
-  ignorePatterns: ['dist/'],
-  rules: {
-    '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+  extends: ['../../.eslintrc.cjs'],
+  parserOptions: {
+    project: ['./tsconfig.json'],
   },
 }
 ```
