@@ -18,7 +18,7 @@ export class ReconciliationEngine {
   async processSessionEvent(event: NormalizedAgentEvent): Promise<void> {
     if (event.tool !== 'edit_file') return
 
-    const params = event.params as { path?: unknown; content?: unknown }
+    const params = event.params as { path?: unknown; content?: unknown; patch?: unknown }
     if (typeof params.path !== 'string') return
     const filePath = params.path
 
@@ -29,20 +29,16 @@ export class ReconciliationEngine {
 
     const editsByAgent = new Map<string, FileEdit>()
     for (const row of rows) {
-      const p = row.params as { path?: unknown; content?: unknown }
+      const p = row.params as { path?: unknown; content?: unknown; patch?: unknown }
       if (p.path !== filePath) continue
-      editsByAgent.set(row.agentId, {
-        agentId: row.agentId,
-        content: typeof p.content === 'string' ? p.content : ''
-      })
+      const content = typeof p.content === 'string' ? p.content : typeof p.patch === 'string' ? p.patch : ''
+      editsByAgent.set(row.agentId, { agentId: row.agentId, content })
     }
 
     // Ensure the triggering event is counted even if not yet persisted
     if (!editsByAgent.has(event.agentId)) {
-      editsByAgent.set(event.agentId, {
-        agentId: event.agentId,
-        content: typeof params.content === 'string' ? params.content : ''
-      })
+      const content = typeof params.content === 'string' ? params.content : typeof params.patch === 'string' ? params.patch : ''
+      editsByAgent.set(event.agentId, { agentId: event.agentId, content })
     }
 
     if (editsByAgent.size < 2) return

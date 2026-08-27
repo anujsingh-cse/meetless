@@ -30,7 +30,7 @@ export class CodexCliConnector extends BaseConnector {
   }
 
   private process: ChildProcessWithoutNullStreams | null = null
-  buffer = ''
+  private buffer = ''
   private workingDir: string
   private eventCounter = 0
 
@@ -88,7 +88,7 @@ export class CodexCliConnector extends BaseConnector {
     }
   }
 
-  handleMCPMessage(raw: MCPMessage | string): void {
+  private handleMCPMessage(raw: MCPMessage | string): void {
     let msg: MCPMessage | null
     if (typeof raw === 'string') {
       try {
