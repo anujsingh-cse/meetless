@@ -9,7 +9,8 @@
     "test": "vitest run",
     "lint": "eslint src --ext .ts",
     "demo": "npx tsx scripts/demo-claude-connector.ts",
-    "demo:codex": "npx tsx scripts/demo-codex-connector.ts"
+    "demo:codex": "npx tsx scripts/demo-codex-connector.ts",
+    "demo:cursor": "npx tsx scripts/demo-cursor-hooks.ts"
   },
   "dependencies": {
     "@meetless/database": "*",
