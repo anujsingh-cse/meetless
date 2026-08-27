@@ -25,6 +25,32 @@ describe('normalizeCursorHookEvent', () => {
     expect(result!.agentId).toContain('cursor-')
   })
 
+  it('maps preToolUse Edit to edit_file', () => {
+    const event: CursorHookEvent = {
+      ...base,
+      hookEventName: 'preToolUse',
+      toolName: 'Edit',
+      toolInput: { file_path: 'src/app.ts', content: 'edited content' },
+    }
+    const result = normalizeCursorHookEvent(event, 'cursor-hooks', '1.0.0')
+    expect(result).not.toBeNull()
+    expect(result!.tool).toBe('edit_file')
+    expect(result!.params).toEqual({ path: 'src/app.ts', content: 'edited content' })
+  })
+
+  it('maps preToolUse Glob to list_files', () => {
+    const event: CursorHookEvent = {
+      ...base,
+      hookEventName: 'preToolUse',
+      toolName: 'Glob',
+      toolInput: { pattern: '*.ts' },
+    }
+    const result = normalizeCursorHookEvent(event, 'cursor-hooks', '1.0.0')
+    expect(result).not.toBeNull()
+    expect(result!.tool).toBe('list_files')
+    expect(result!.params).toEqual({ pattern: '*.ts' })
+  })
+
   it('maps preToolUse Write to edit_file', () => {
     const event: CursorHookEvent = {
       ...base,
@@ -150,6 +176,31 @@ describe('normalizeCursorHookEvent', () => {
     expect(result).not.toBeNull()
     expect(result!.tool).toBe('session_end')
     expect(result!.params).toEqual({ status: 'completed' })
+  })
+
+  it('maps sessionEnd to session_end', () => {
+    const event: CursorHookEvent = {
+      ...base,
+      hookEventName: 'sessionEnd',
+      status: 'completed',
+    }
+    const result = normalizeCursorHookEvent(event, 'cursor-hooks', '1.0.0')
+    expect(result).not.toBeNull()
+    expect(result!.tool).toBe('session_end')
+    expect(result!.params).toEqual({ status: 'completed' })
+  })
+
+  it('maps subagentStop to subagent with stop action', () => {
+    const event: CursorHookEvent = {
+      ...base,
+      hookEventName: 'subagentStop',
+      subagentId: 'sub-1',
+      subagentName: 'investigator',
+    }
+    const result = normalizeCursorHookEvent(event, 'cursor-hooks', '1.0.0')
+    expect(result).not.toBeNull()
+    expect(result!.tool).toBe('subagent')
+    expect(result!.params).toEqual({ action: 'stop', subagentId: 'sub-1', subagentName: 'investigator' })
   })
 
   it('maps subagentStart to subagent with start action', () => {
