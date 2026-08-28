@@ -15,7 +15,7 @@
       "import": "./dist/plugin.js"
     }
   },
-  "files": ["dist", "scripts"],
+  "files": ["dist", "scripts", "README.md"],
   "scripts": {
     "build": "tsc",
     "test": "vitest run",

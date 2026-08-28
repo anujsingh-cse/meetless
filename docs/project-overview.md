@@ -81,6 +81,7 @@ See the existing `ClaudeCodeConnector` implementation for reference.
 | Claude Code | `claude-code` | `edit_file`, `read_file`, `list_files`, `grep`, `todo_write`, `bash` | ✅ |
 | Codex CLI | `codex-cli` | `file_patch` → `edit_file`, `shell_exec` → `bash` | ✅ |
 | Cursor Hooks | `cursor-hooks` | `edit_file`, `read_file`, `list_files`, `grep`, `bash`, `subagent`, `mcp_tool`, `session_init`, `session_end` | ✅ |
+| OpenCode | `opencode` | `edit`, `write`, `patch`, `file.edited` → `edit_file` | ✅ |
 
 ## Workspace Packages
 
