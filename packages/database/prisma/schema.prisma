@@ -55,6 +55,7 @@ model Workspace {
   updatedAt   DateTime  @updatedAt
   team        Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
   sessions    Session[]
+  rules       Rule[]
 }
 
 model Session {
@@ -139,4 +140,48 @@ model NormalizedEvent {
 
   @@index([sessionId, timestamp])
   @@index([connectorId, timestamp])
+}
+
+enum RuleAction {
+  LOG
+  NOTIFY
+}
+
+model Rule {
+  id           String     @id @default(cuid())
+  workspaceId  String
+  name         String
+  description  String?
+  enabled      Boolean    @default(true)
+  priority     Int        @default(100)
+  tool         String?
+  pathPattern  String?
+  connectorId  String?
+  agentPattern String?
+  action       RuleAction
+  message      String?
+  createdBy    String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  workspace    Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  @@index([workspaceId, enabled])
+}
+
+model RuleHit {
+  id          String   @id @default(cuid())
+  ruleId      String
+  workspaceId String
+  sessionId   String
+  agentId     String
+  connectorId String
+  tool        String
+  path        String?
+  ruleName    String
+  action      RuleAction
+  matchedOn   Json
+  message     String?
+  createdAt   DateTime @default(now())
+  @@index([sessionId, createdAt])
+  @@index([ruleId])
+  @@index([workspaceId, createdAt])
 }
