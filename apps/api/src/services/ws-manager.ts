@@ -54,6 +54,10 @@ export class WSManager {
     this.broadcastToSession(sessionId, { type: 'conflict_resolved', payload: { conflictId, resolution } })
   }
 
+  broadcastRuleHit(sessionId: string, payload: unknown) {
+    this.broadcastToSession(sessionId, { type: 'rule_triggered', payload })
+  }
+
   getSessionClients(sessionId: string): WSClient[] {
     const ids = this.sessionClients.get(sessionId)
     if (!ids) return []
