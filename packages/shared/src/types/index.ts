@@ -7,12 +7,6 @@ export interface AgentAction {
   timestamp: number
 }
 
-export interface Rule {
-  id: string
-  trigger: { type: 'file' | 'tool' | 'agent'; pattern: string }
-  action: { type: 'inject' | 'approve' | 'log'; payload: unknown }
-}
-
 export interface Conflict {
   id: string
   sessionId: string
