@@ -1,6 +1,8 @@
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { Prisma } from '@prisma/client'
+import { randomUUID } from 'node:crypto'
 import { ReconciliationEngine } from '../services/reconciliation.js'
+import { evaluate } from '../services/rule-engine.js'
 
 interface PostEventBody {
   sessionId: string
@@ -70,6 +72,28 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
             id: { type: 'string' },
             sessionId: { type: 'string' },
             tool: { type: 'string' },
+            ruleHits: {
+              type: 'array',
+              items: {
+                type: 'object',
+                required: ['id', 'ruleId', 'ruleName', 'action', 'matchedOn', 'createdAt'],
+                properties: {
+                  id: { type: 'string' },
+                  ruleId: { type: 'string' },
+                  ruleName: { type: 'string' },
+                  action: { type: 'string', enum: ['LOG', 'NOTIFY'] },
+                  message: { type: ['string', 'null'] },
+                  path: { type: ['string', 'null'] },
+                  tool: { type: 'string' },
+                  agentId: { type: 'string' },
+                  connectorId: { type: 'string' },
+                  sessionId: { type: 'string' },
+                  workspaceId: { type: 'string' },
+                  matchedOn: { type: 'object', additionalProperties: true },
+                  createdAt: { type: 'string', format: 'date-time' },
+                },
+              },
+            },
           },
         },
         400: {
@@ -105,6 +129,52 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
       }
     })
 
+    // --- Rule engine seam (additive; never blocks ingestion or reconciliation) ---
+    let ruleHits: Array<Record<string, unknown>> | undefined
+    try {
+      const rules = await app.prisma.rule.findMany({
+        where: { workspaceId: session.workspaceId, enabled: true },
+      })
+      if (rules.length > 0) {
+        const results = evaluate({
+          sessionId: event.sessionId,
+          agentId: event.agentId,
+          tool: event.tool,
+          params: event.params,
+          result: event.result ?? undefined,
+          timestamp: event.timestamp.getTime(),
+          connectorId: event.connectorId,
+          connectorVersion: event.connectorVersion,
+          mcpEventId: event.mcpEventId,
+        }, rules)
+        if (results.length > 0) {
+          const firedAt = new Date()
+          const hits = results.map((r) => ({
+            id: randomUUID(),
+            ruleId: r.ruleId,
+            workspaceId: session.workspaceId,
+            sessionId: event.sessionId,
+            agentId: event.agentId,
+            connectorId: event.connectorId,
+            tool: event.tool,
+            path: r.event.path,
+            ruleName: r.ruleName,
+            action: r.action,
+            matchedOn: r.matchedOn as unknown as Prisma.InputJsonValue,
+            message: r.message,
+            createdAt: firedAt,
+          }))
+          await app.prisma.ruleHit.createMany({ data: hits })
+          for (const hit of hits) {
+            if (hit.action === 'NOTIFY') app.wsManager.broadcastRuleHit(hit.sessionId, hit)
+          }
+          ruleHits = hits.map((h) => ({ ...h, matchedOn: h.matchedOn, createdAt: h.createdAt.toISOString() }))
+        }
+      }
+    } catch (err) {
+      app.log.error({ err, workspaceId: session.workspaceId, sessionId: event.sessionId, tool: event.tool }, 'rule evaluation failed; ingestion unaffected')
+    }
+
     await reconciliation.processSessionEvent({
       sessionId: event.sessionId,
       agentId: event.agentId,
@@ -117,7 +187,7 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
       mcpEventId: event.mcpEventId
     })
 
-    return reply.code(201).send({ id: event.id, sessionId: event.sessionId, tool: event.tool })
+    return reply.code(201).send({ id: event.id, sessionId: event.sessionId, tool: event.tool, ruleHits })
   })
 
   app.get('/sessions/:sessionId/conflicts', {

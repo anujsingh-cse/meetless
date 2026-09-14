@@ -44,6 +44,8 @@ afterAll(async () => {
 beforeEach(async () => {
   await prisma.normalizedEvent.deleteMany()
   await prisma.conflict.deleteMany()
+  await prisma.ruleHit.deleteMany()
+  await prisma.rule.deleteMany()
   await prisma.session.deleteMany()
   await prisma.workspace.deleteMany()
   await prisma.membership.deleteMany()
@@ -130,5 +132,68 @@ describe('GET /api/sessions/:sessionId/conflicts', () => {
     expect(body).toHaveLength(1)
     expect(body[0].file).toBe('src/foo.ts')
     expect(body[0].agents).toEqual(expect.arrayContaining(['claude-1', 'claude-2']))
+  })
+})
+
+describe('rules in event ingestion', () => {
+  it('persists a NOTIFY hit and returns ruleHits when a rule matches', async () => {
+    const session = await createSession('Rules Ingest')
+    const rule = await prisma.rule.create({
+      data: { workspaceId: session.workspaceId, name: 'protect', action: 'NOTIFY', pathPattern: 'config/prod/**', message: 'off-limits' },
+    })
+
+    const res = await app.inject({
+      method: 'POST', url: '/api/events',
+      payload: {
+        sessionId: session.id, agentId: 'claude-1', tool: 'edit_file',
+        params: { path: 'config/prod/app.yaml', content: 'x' }, result: { success: true },
+        connectorId: 'claude-code', connectorVersion: '1.0.0', mcpEventId: 'm-r1',
+      },
+    })
+
+    expect(res.statusCode).toBe(201)
+    const body = JSON.parse(res.payload)
+    expect(body.ruleHits).toHaveLength(1)
+    expect(body.ruleHits[0].ruleId).toBe(rule.id)
+    expect(body.ruleHits[0].action).toBe('NOTIFY')
+
+    const hit = await prisma.ruleHit.findFirst({ where: { sessionId: session.id } })
+    expect(hit).not.toBeNull()
+    expect(hit?.ruleName).toBe('protect')
+    expect(hit?.matchedOn).toEqual({ tool: null, pathPattern: 'config/prod/**', connectorId: null, agentPattern: null })
+    expect(hit?.id).toBe(body.ruleHits[0].id)
+  })
+
+  it('omits ruleHits when no rule matches', async () => {
+    const session = await createSession('Rules None')
+    const res = await app.inject({
+      method: 'POST', url: '/api/events',
+      payload: {
+        sessionId: session.id, agentId: 'claude-1', tool: 'edit_file',
+        params: { path: 'src/app.ts', content: 'x' }, result: { success: true },
+        connectorId: 'claude-code', connectorVersion: '1.0.0', mcpEventId: 'm-r2',
+      },
+    })
+    expect(res.statusCode).toBe(201)
+    const body = JSON.parse(res.payload)
+    expect(body.ruleHits).toBeUndefined()
+  })
+
+  it('still returns 201 and persists the event when a stored rule has an invalid glob (failure isolation)', async () => {
+    const session = await createSession('Rules Faulty')
+    await prisma.rule.create({
+      data: { workspaceId: session.workspaceId, name: 'bad', action: 'NOTIFY', pathPattern: 'config(prod/**' },
+    })
+    const res = await app.inject({
+      method: 'POST', url: '/api/events',
+      payload: {
+        sessionId: session.id, agentId: 'claude-1', tool: 'edit_file',
+        params: { path: 'config/prod/app.yaml', content: 'x' }, result: { success: true },
+        connectorId: 'claude-code', connectorVersion: '1.0.0', mcpEventId: 'm-r3',
+      },
+    })
+    expect(res.statusCode).toBe(201)
+    const persisted = await prisma.normalizedEvent.findFirst({ where: { mcpEventId: 'm-r3' } })
+    expect(persisted).not.toBeNull()
   })
 })
