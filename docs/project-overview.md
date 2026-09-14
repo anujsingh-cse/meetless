@@ -62,6 +62,24 @@ docker compose down           # Stop services
 | POST | `/api/events` | Ingest a normalized agent event |
 | GET | `/api/sessions/:sessionId/conflicts` | List conflicts for a session |
 | POST | `/api/conflicts/:conflictId/resolve` | Resolve a conflict |
+| POST | `/api/rules` | Create a rule (workspace-scoped) |
+| GET | `/api/rules?workspaceId=…` | List rules (priority asc) |
+| PATCH | `/api/rules/:id` | Update / enable / disable a rule |
+| DELETE | `/api/rules/:id` | Delete a rule (hits persist) |
+| GET | `/api/sessions/:sessionId/rule-hits` | Rule hits for a session |
+
+## Rule Engine (Phase 3A)
+
+Workspace-scoped, deterministic rules evaluate each normalized agent event during ingestion (rules run for all connectors — claude-code, codex-cli, cursor-hooks, opencode — with no connector-specific code). Actions are `LOG` (persist a hit) and `NOTIFY` (persist a hit + WebSocket `rule_triggered`). All matching rules fire; `priority` orders results only. Rules never block or alter reconciliation.
+
+| Rule | When it matches | Action |
+|------|-----------------|--------|
+| `pathPattern` glob (`*`, `**`; `\` normalized to `/`) | `event.params.path` | — |
+| `tool` | exact `event.tool` | — |
+| `connectorId` | exact `event.connectorId` | — |
+| `agentPattern` glob | `event.agentId` | — |
+
+A rule's constraints are AND-ed; an unset constraint is a wildcard. Patterns are validated (via picomatch) at create/update time.
 
 ## Connector Development
 
