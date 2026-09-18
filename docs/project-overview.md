@@ -67,6 +67,7 @@ docker compose down           # Stop services
 | PATCH | `/api/rules/:id` | Update / enable / disable a rule |
 | DELETE | `/api/rules/:id` | Delete a rule (hits persist) |
 | GET | `/api/sessions/:sessionId/rule-hits` | Rule hits for a session |
+| POST | `/api/decisions` | Pre-execution allow/deny decision (prevention) |
 
 ## Rule Engine (Phase 3A)
 
@@ -80,6 +81,15 @@ Workspace-scoped, deterministic rules evaluate each normalized agent event durin
 | `agentPattern` glob | `event.agentId` | — |
 
 A rule's constraints are AND-ed; an unset constraint is a wildcard. Patterns are validated (via picomatch) at create/update time.
+
+## Prevention (Phase 3B)
+
+`POST /api/decisions` is the synchronous pre-execution decision path. Before a tool
+runs, connectors (OpenCode plugin, Cursor hooks) ask Meetless for an `allow`/`deny`
+verdict. Only rules with a `decision` field (`ALLOW`/`DENY`) participate; `LOG`/`NOTIFY`
+rules never deny. Verdicts fail open on timeout/error; adapters enforce their own ~3s
+timeout. Outcomes are recorded in the scalar `RuleDecision` audit table. Blocked calls
+never enter ingestion or reconciliation.
 
 ## Connector Development
 

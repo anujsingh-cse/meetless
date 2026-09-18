@@ -12,7 +12,8 @@
     "demo:codex": "npx tsx scripts/demo-codex-connector.ts",
     "demo:cursor": "npx tsx scripts/demo-cursor-hooks.ts",
     "demo:opencode": "npx tsx scripts/demo-opencode.ts",
-    "demo:rules": "npx tsx scripts/demo-rules.ts"
+    "demo:rules": "npx tsx scripts/demo-rules.ts",
+    "demo:decisions": "npx tsx scripts/demo-decisions.ts"
   },
   "dependencies": {
     "@meetless/database": "*",
