@@ -2,7 +2,9 @@ import type { Plugin } from '@opencode-ai/plugin'
 import { normalizeOpenCodeEvent } from './normalizer.js'
 import { emitToMeetless } from './emitter.js'
 import { loadConfig } from './config.js'
-import type { OpenCodeEventInput } from './types.js'
+import type { PluginConfig } from './config.js'
+import { requestDecision, normalizePendingToolCall } from './decision.js'
+import { OPENCODE_CONNECTOR_VERSION, type OpenCodeEventInput } from './types.js'
 
 // Build an OpenCodeEventInput from the documented tool.execute.after hook signature.
 export function buildInputFromToolHook(
@@ -64,6 +66,12 @@ class PathDeduper {
   }
 }
 
+// Shared agentId derivation for pre-execution (decisions) and post-execution
+// (ingestion) paths — identical so agentPattern rules behave the same both ways.
+function resolveAgentId(config: PluginConfig, sessionId: string): string {
+  return config.agentId ?? `opencode-${sessionId.slice(0, 8)}`
+}
+
 export const MeetlessPlugin: Plugin = async () => {
   const config = loadConfig(process.env as Record<string, string | undefined>)
   const deduper = new PathDeduper(1000)
@@ -74,8 +82,8 @@ export const MeetlessPlugin: Plugin = async () => {
     if (!existing.sessionId) return
     const normalized = normalizeOpenCodeEvent(existing, {
       connectorId: 'opencode',
-      connectorVersion: '0.0.0',
-      agentId: config.agentId,
+      connectorVersion: OPENCODE_CONNECTOR_VERSION,
+      agentId: resolveAgentId(config, existing.sessionId),
     })
     if (!normalized) return
     const key = `${normalized.sessionId}|${String(normalized.params.path)}`
@@ -84,6 +92,21 @@ export const MeetlessPlugin: Plugin = async () => {
   }
 
   return {
+    async 'tool.execute.before'(input, output) {
+      if (input?.sessionID) currentSession = String(input.sessionID)
+      const sessionId = String(input.sessionID ?? currentSession)
+      if (!sessionId) return
+      const pending = normalizePendingToolCall(input, output?.args, {
+        connectorId: 'opencode',
+        connectorVersion: OPENCODE_CONNECTOR_VERSION,
+        agentId: resolveAgentId(config, sessionId),
+      })
+      if (!pending) return
+      const verdict = await requestDecision(config, pending)
+      if (verdict.decision === 'deny') {
+        throw new Error(verdict.reason ?? 'Blocked by rule')
+      }
+    },
     async 'tool.execute.after'(input, output) {
       if (input?.sessionID) currentSession = String(input.sessionID)
       await forward(buildInputFromToolHook(input, output))

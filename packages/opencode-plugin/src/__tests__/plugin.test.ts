@@ -1,10 +1,15 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { PluginInput } from '@opencode-ai/plugin'
 import { MeetlessPlugin, buildInputFromToolHook, buildInputFromFileEvent, dedupePath } from '../plugin.js'
 import { normalizeOpenCodeEvent } from '../normalizer.js'
 
 vi.mock('../emitter.js', () => ({ emitToMeetless: vi.fn() }))
 import { emitToMeetless } from '../emitter.js'
+vi.mock('../decision.js', () => ({
+  requestDecision: vi.fn(),
+  normalizePendingToolCall: vi.fn(),
+}))
+import { requestDecision, normalizePendingToolCall } from '../decision.js'
 
 const stubCtx = { client: { app: { log: vi.fn() } } } as unknown as PluginInput
 
@@ -58,5 +63,38 @@ describe('MeetlessPlugin', () => {
       { title: '', output: '', metadata: '' }
     )
     expect(emitToMeetless).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('MeetlessPlugin tool.execute.before', () => {
+  beforeEach(() => {
+    vi.mocked(normalizePendingToolCall).mockImplementation((input, args) => ({
+      sessionId: String(input?.sessionID ?? ''),
+      agentId: 'oc-1',
+      connectorId: 'opencode',
+      tool: input?.tool === 'edit' ? 'edit_file' : (input?.tool ?? ''),
+      params: (args && typeof args.filePath === 'string') ? { path: args.filePath } : {},
+    }))
+  })
+
+  it('exposes tool.execute.before', async () => {
+    const hooks = await MeetlessPlugin(stubCtx)
+    expect(typeof hooks['tool.execute.before']).toBe('function')
+  })
+
+  it('throws (blocks execution) when the decision client returns deny', async () => {
+    vi.mocked(requestDecision).mockResolvedValue({ decision: 'deny', reason: 'off-limits' })
+    const hooks = await MeetlessPlugin(stubCtx)
+    await expect(
+      hooks['tool.execute.before']!({ tool: 'edit', sessionID: 'sess-1', callID: 'c' }, { args: { filePath: 'src/a.ts' } })
+    ).rejects.toThrow('off-limits')
+  })
+
+  it('does not throw when the decision client allows', async () => {
+    vi.mocked(requestDecision).mockResolvedValue({ decision: 'allow' })
+    const hooks = await MeetlessPlugin(stubCtx)
+    await expect(
+      hooks['tool.execute.before']!({ tool: 'edit', sessionID: 'sess-1', callID: 'c' }, { args: { filePath: 'src/a.ts' } })
+    ).resolves.toBeUndefined()
   })
 })
