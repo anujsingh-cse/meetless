@@ -157,6 +157,38 @@ describe('evaluate', () => {
       { tool: 'edit_file', path: 'src/app.ts' },
     ])
   })
+
+  it('accepts a RuleEvaluableEvent (pre-execution shape) and matches deterministically', () => {
+    const r = base({ pathPattern: 'config/**', action: 'NOTIFY' })
+    const pre = { agentId: 'claude-1', connectorId: 'claude-code', tool: 'edit_file', params: { path: 'config/prod/x' } }
+    const res = evaluate(pre, [r])
+    expect(res).toHaveLength(1)
+    expect(res[0].ruleId).toBe('r1')
+  })
+
+  it('accepts a full NormalizedAgentEvent (post-execution superset) via the same evaluator', () => {
+    const r = base({ pathPattern: 'config/**', action: 'NOTIFY' })
+    const full = event({ params: { path: 'config/prod/x' } }) as never
+    const res = evaluate(full, [r])
+    expect(res).toHaveLength(1)
+    expect(res[0].ruleId).toBe('r1')
+  })
+
+  it('produces identical results for pre-execution and post-execution shapes with the same matcher inputs', () => {
+    const r = base({ pathPattern: 'config/**', action: 'NOTIFY' })
+    const pre = { agentId: 'claude-1', connectorId: 'claude-code', tool: 'edit_file', params: { path: 'config/prod/x' } }
+    const full = event({ params: { path: 'config/prod/x' } }) as never
+    const a = evaluate(pre, [r])
+    const b = evaluate(full, [r])
+    expect(a).toEqual(b)
+  })
+
+  it('keeps RuleLike.decision optional: null/undefined rules match observation-only behavior', () => {
+    const r = base({ decision: null })
+    const res = evaluate(event() as never, [r])
+    expect(res).toHaveLength(1) // decision presence does NOT change matching
+    expect(res[0].action).toBe('LOG')
+  })
 })
 
 describe('isValidGlob', () => {

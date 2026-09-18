@@ -137,15 +137,10 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
       })
       if (rules.length > 0) {
         const results = evaluate({
-          sessionId: event.sessionId,
           agentId: event.agentId,
           tool: event.tool,
           params: event.params,
-          result: event.result ?? undefined,
-          timestamp: event.timestamp.getTime(),
           connectorId: event.connectorId,
-          connectorVersion: event.connectorVersion,
-          mcpEventId: event.mcpEventId,
         }, rules)
         if (results.length > 0) {
           const firedAt = new Date()

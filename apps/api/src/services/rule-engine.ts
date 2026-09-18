@@ -1,7 +1,18 @@
 import picomatch from 'picomatch'
-import type { NormalizedAgentEvent } from '@meetless/shared/types'
 
 export type RuleAction = 'LOG' | 'NOTIFY'
+
+export type RuleVerdict = 'ALLOW' | 'DENY'
+
+// Narrow shared evaluation contract. A full NormalizedAgentEvent is a valid
+// superset: it has agentId, connectorId, tool, and params (params is `unknown`
+// there too). Only params.path (a string) is read by the matcher.
+export interface RuleEvaluableEvent {
+  agentId: string
+  connectorId: string
+  tool: string
+  params: unknown
+}
 
 export interface RuleLike {
   id: string
@@ -13,6 +24,7 @@ export interface RuleLike {
   connectorId: string | null
   agentPattern: string | null
   action: RuleAction
+  decision?: RuleVerdict | null
   message: string | null
   createdAt: Date | string
 }
@@ -65,7 +77,7 @@ function eventPath(params: unknown): string | null {
   return typeof p === 'string' ? p : null
 }
 
-function matchesRule(rule: RuleLike, path: string | null, event: NormalizedAgentEvent): boolean {
+function matchesRule(rule: RuleLike, path: string | null, event: RuleEvaluableEvent): boolean {
   if (rule.tool !== null && rule.tool !== event.tool) return false
   if (rule.connectorId !== null && rule.connectorId !== event.connectorId) return false
   if (rule.agentPattern !== null && !picomatch(rule.agentPattern, { dot: true })(event.agentId)) return false
@@ -84,7 +96,7 @@ function byDeterministicOrder(a: RuleLike, b: RuleLike): number {
   return a.id.localeCompare(b.id)
 }
 
-export function evaluate(event: NormalizedAgentEvent, rules: RuleLike[]): RuleEvaluationResult[] {
+export function evaluate(event: RuleEvaluableEvent, rules: RuleLike[]): RuleEvaluationResult[] {
   const path = eventPath(event.params)
   return [...rules]
     .sort(byDeterministicOrder)
