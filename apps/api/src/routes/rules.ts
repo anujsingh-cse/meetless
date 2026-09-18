@@ -1,6 +1,6 @@
 import { FastifyPluginAsync } from 'fastify'
 import { isValidGlob } from '../services/rule-engine.js'
-import type { RuleAction } from '../services/rule-engine.js'
+import type { RuleAction, RuleVerdict } from '../services/rule-engine.js'
 
 interface RuleBody {
   workspaceId?: string
@@ -13,6 +13,7 @@ interface RuleBody {
   connectorId?: string
   agentPattern?: string
   action?: RuleAction
+  decision?: RuleVerdict
   message?: string
   createdBy?: string
 }
@@ -32,6 +33,7 @@ const ruleResponseSchema = {
     connectorId: { type: ['string', 'null'] },
     agentPattern: { type: ['string', 'null'] },
     action: { type: 'string', enum: ['LOG', 'NOTIFY'] },
+    decision: { type: ['string', 'null'], enum: ['ALLOW', 'DENY', null] },
     message: { type: ['string', 'null'] },
     createdBy: { type: ['string', 'null'] },
     createdAt: { type: 'string', format: 'date-time' },
@@ -62,12 +64,12 @@ const hitResponseSchema = {
 function toPublicRule(r: {
   id: string; workspaceId: string; name: string; description: string | null; enabled: boolean; priority: number;
   tool: string | null; pathPattern: string | null; connectorId: string | null; agentPattern: string | null;
-  action: RuleAction; message: string | null; createdBy: string | null; createdAt: Date; updatedAt: Date;
+  action: RuleAction; decision: RuleVerdict | null; message: string | null; createdBy: string | null; createdAt: Date; updatedAt: Date;
 }) {
   return {
     id: r.id, workspaceId: r.workspaceId, name: r.name, description: r.description, enabled: r.enabled,
     priority: r.priority, tool: r.tool, pathPattern: r.pathPattern, connectorId: r.connectorId,
-    agentPattern: r.agentPattern, action: r.action, message: r.message, createdBy: r.createdBy,
+    agentPattern: r.agentPattern, action: r.action, decision: r.decision ?? null, message: r.message, createdBy: r.createdBy,
     createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString(),
   }
 }
@@ -109,6 +111,7 @@ export const ruleRoutes: FastifyPluginAsync = async (app) => {
           connectorId: { type: 'string' },
           agentPattern: { type: 'string' },
           action: { type: 'string', enum: ['LOG', 'NOTIFY'] },
+          decision: { type: 'string', enum: ['ALLOW', 'DENY'] },
           message: { type: 'string' },
           createdBy: { type: 'string' },
         },
@@ -135,6 +138,7 @@ export const ruleRoutes: FastifyPluginAsync = async (app) => {
         connectorId: toStringOrNull(body.connectorId),
         agentPattern: toStringOrNull(body.agentPattern),
         action: body.action!,
+        decision: body.decision ?? null,
         message: body.message,
         createdBy: body.createdBy,
       },
@@ -175,6 +179,7 @@ export const ruleRoutes: FastifyPluginAsync = async (app) => {
           connectorId: { type: ['string', 'null'] },
           agentPattern: { type: ['string', 'null'] },
           action: { type: 'string', enum: ['LOG', 'NOTIFY'] },
+          decision: { type: ['string', 'null'], enum: ['ALLOW', 'DENY', null] },
           message: { type: ['string', 'null'] },
           createdBy: { type: ['string', 'null'] },
         },
@@ -208,6 +213,7 @@ export const ruleRoutes: FastifyPluginAsync = async (app) => {
         connectorId: merged.connectorId,
         agentPattern: merged.agentPattern,
         action: body.action ?? (existing.action as RuleAction),
+        decision: body.decision !== undefined ? body.decision : existing.decision,
         message: body.message !== undefined ? body.message : existing.message,
         createdBy: body.createdBy !== undefined ? body.createdBy : existing.createdBy,
       },

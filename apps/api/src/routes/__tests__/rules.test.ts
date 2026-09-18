@@ -162,3 +162,43 @@ describe('GET /api/sessions/:sessionId/rule-hits', () => {
     expect(body[0].matchedOn).toEqual({ tool: null, pathPattern: 'a/**', connectorId: null, agentPattern: null })
   })
 })
+
+describe('rule decision field', () => {
+  it('creates a rule with a DENY decision', async () => {
+    const ws = await createWorkspace()
+    const res = await app.inject({ method: 'POST', url: '/api/rules', payload: { ...validRuleBody(ws.id), decision: 'DENY' } })
+    expect(res.statusCode).toBe(201)
+    const body = JSON.parse(res.payload)
+    expect(body.decision).toBe('DENY')
+    expect(body.action).toBe('NOTIFY') // RuleAction unchanged
+  })
+
+  it('serializes decision as null when not provided', async () => {
+    const ws = await createWorkspace()
+    const res = await app.inject({ method: 'POST', url: '/api/rules', payload: validRuleBody(ws.id) })
+    expect(res.statusCode).toBe(201)
+    expect(JSON.parse(res.payload).decision).toBeNull()
+  })
+
+  it('rejects an invalid decision enum value', async () => {
+    const ws = await createWorkspace()
+    const res = await app.inject({ method: 'POST', url: '/api/rules', payload: { ...validRuleBody(ws.id), decision: 'BLOCK' } })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('updates the decision field via PATCH', async () => {
+    const ws = await createWorkspace()
+    const rule = await prisma.rule.create({ data: { workspaceId: ws.id, name: 'r', action: 'LOG', pathPattern: 'a/**' } })
+    const res = await app.inject({ method: 'PATCH', url: `/api/rules/${rule.id}`, payload: { decision: 'DENY' } })
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(res.payload).decision).toBe('DENY')
+  })
+
+  it('can clear the decision field via PATCH', async () => {
+    const ws = await createWorkspace()
+    const rule = await prisma.rule.create({ data: { workspaceId: ws.id, name: 'r', action: 'LOG', pathPattern: 'a/**', decision: 'DENY' } })
+    const res = await app.inject({ method: 'PATCH', url: `/api/rules/${rule.id}`, payload: { decision: null } })
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(res.payload).decision).toBeNull()
+  })
+})
