@@ -8,6 +8,7 @@ import { healthRoutes } from './routes/health.js'
 import { eventRoutes } from './routes/events.js'
 import { conflictRoutes } from './routes/conflicts.js'
 import { ruleRoutes } from './routes/rules.js'
+import { decisionRoutes } from './routes/decisions.js'
 
 export async function buildApp() {
   const app = Fastify({ logger: { level: config.LOG_LEVEL } })
@@ -19,5 +20,6 @@ export async function buildApp() {
   await app.register(eventRoutes, { prefix: '/api' })
   await app.register(conflictRoutes, { prefix: '/api' })
   await app.register(ruleRoutes, { prefix: '/api' })
+  await app.register(decisionRoutes, { prefix: '/api' })
   return app
 }
