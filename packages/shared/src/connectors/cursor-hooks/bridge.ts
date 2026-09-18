@@ -1,12 +1,13 @@
 import http from 'http'
 import type { NormalizedAgentEvent } from '../../types/index.js'
 import type { CursorHookPayload } from './types.js'
-import { isCursorHookEventName, BRIDGE_SECRET_HEADER } from './types.js'
+import { isCursorHookEventName, isCursorPermissionHook, BRIDGE_SECRET_HEADER, CursorDecisionConfig } from './types.js'
 import { normalizeCursorHookEvent } from './normalizer.js'
 
 export interface BridgeServerOptions {
   secret: string
   connectorVersion: string
+  decision?: CursorDecisionConfig
 }
 
 export class BridgeServer {
@@ -14,11 +15,13 @@ export class BridgeServer {
   private _port = 0
   private secret: string
   private connectorVersion: string
+  private decision?: CursorDecisionConfig
   private eventHandlers: ((event: NormalizedAgentEvent) => void)[] = []
 
   constructor(options: BridgeServerOptions) {
     this.secret = options.secret
     this.connectorVersion = options.connectorVersion
+    this.decision = options.decision
   }
 
   get port(): number {
@@ -111,8 +114,57 @@ export class BridgeServer {
         this.eventHandlers.forEach(h => h(event))
       }
 
+      void this.respond(res, payload.hook_event_name, event)
+    })
+  }
+
+  // Permission hooks get a synchronous verdict from Meetless (fail-open to allow);
+  // all other hooks stay observe-only and just respond { ok: true }.
+  private async respond(res: http.ServerResponse, hookEventName: string, event: NormalizedAgentEvent | null): Promise<void> {
+    if (!isCursorPermissionHook(hookEventName) || !event || !this.decision?.baseUrl) {
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ ok: true }))
-    })
+      return
+    }
+
+    try {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), this.decision?.timeoutMs ?? 3000)
+      try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+        if (this.decision.apiToken) headers.Authorization = `Bearer ${this.decision.apiToken}`
+        const decisionRes = await fetch(`${this.decision.baseUrl}/api/decisions`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            sessionId: event.sessionId,
+            agentId: event.agentId,
+            connectorId: event.connectorId,
+            tool: event.tool,
+            params: event.params,
+          }),
+          signal: controller.signal,
+        })
+        if (!decisionRes.ok) {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ ok: true }))
+          return
+        }
+        const verdictBody = (await decisionRes.json()) as { decision?: string; reason?: string }
+        if (verdictBody.decision === 'deny') {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ ok: true, verdict: 'deny', reason: verdictBody.reason }))
+          return
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: true, verdict: 'allow' }))
+      } finally {
+        clearTimeout(timer)
+      }
+    } catch {
+      // Fail-open: Meetless unreachable/timeout → no verdict; bridge-client allows.
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ ok: true }))
+    }
   }
 }

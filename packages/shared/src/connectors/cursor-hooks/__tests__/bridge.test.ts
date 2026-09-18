@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import http from 'http'
 import { BridgeServer } from '../bridge.js'
+import { isCursorPermissionHook } from '../types.js'
 import type { NormalizedAgentEvent } from '../../../types/index.js'
 
 describe('BridgeServer', () => {
@@ -127,6 +128,73 @@ describe('BridgeServer', () => {
       server.on('error', resolve)
     })
     expect(err).toBeNull()
+  })
+})
+
+describe('isCursorPermissionHook', () => {
+  it('classifies the four permission hooks', () => {
+    for (const h of ['preToolUse', 'beforeShellExecution', 'beforeMCPExecution', 'beforeReadFile']) {
+      expect(isCursorPermissionHook(h)).toBe(true)
+    }
+  })
+  it('does not classify observation hooks', () => {
+    expect(isCursorPermissionHook('afterShellExecution')).toBe(false)
+    expect(isCursorPermissionHook('afterFileEdit')).toBe(false)
+  })
+})
+
+describe('BridgeServer decision path', () => {
+  it('returns a deny verdict for a permission hook when Meetless denies', async () => {
+    const decisionServer = http.createServer((req, res) => {
+      req.resume()
+      req.on('end', () => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ decision: 'deny', reason: 'off-limits' })) })
+    })
+    await new Promise<void>((resolve) => decisionServer.listen(0, '127.0.0.1', resolve))
+    const decisionPort = (decisionServer.address() as { port: number }).port
+    const bridge = new BridgeServer({ secret: 's', connectorVersion: '1.0.0', decision: { baseUrl: `http://127.0.0.1:${decisionPort}` } })
+    await bridge.start()
+    try {
+      const res = await makeRequest(bridge.port, JSON.stringify({ hook_event_name: 'preToolUse', session_id: 'sess-1', tool_name: 'Write', tool_input: { file_path: 'src/a.ts' } }), 's')
+      let body = ''
+      res.on('data', (c) => { body += c })
+      const parsed = await new Promise<{ ok: boolean; verdict?: string; reason?: string }>((resolve) => res.on('end', () => resolve(JSON.parse(body))))
+      expect(parsed.ok).toBe(true)
+      expect(parsed.verdict).toBe('deny')
+      expect(parsed.reason).toBe('off-limits')
+    } finally {
+      await bridge.stop()
+      decisionServer.close()
+    }
+  })
+
+  it('fails open (no verdict) for permission hooks when Meetless is unreachable', async () => {
+    const bridge = new BridgeServer({ secret: 's', connectorVersion: '1.0.0', decision: { baseUrl: 'http://127.0.0.1:1' } })
+    await bridge.start()
+    try {
+      const res = await makeRequest(bridge.port, JSON.stringify({ hook_event_name: 'preToolUse', session_id: 'sess-1', tool_name: 'Write', tool_input: { file_path: 'src/a.ts' } }), 's')
+      let body = ''
+      res.on('data', (c) => { body += c })
+      const parsed = await new Promise<{ ok: boolean; verdict?: string }>((resolve) => res.on('end', () => resolve(JSON.parse(body))))
+      expect(parsed.ok).toBe(true)
+      expect(parsed.verdict).toBeUndefined()
+    } finally {
+      await bridge.stop()
+    }
+  })
+
+  it('keeps observation hooks observe-only (no verdict in response)', async () => {
+    const bridge = new BridgeServer({ secret: 's', connectorVersion: '1.0.0', decision: { baseUrl: 'http://127.0.0.1:1' } })
+    await bridge.start()
+    try {
+      const res = await makeRequest(bridge.port, JSON.stringify({ hook_event_name: 'afterFileEdit', session_id: 'sess-1', tool_name: 'Write', tool_input: { file_path: 'src/a.ts' } }), 's')
+      let body = ''
+      res.on('data', (c) => { body += c })
+      const parsed = await new Promise<{ ok: boolean; verdict?: string }>((resolve) => res.on('end', () => resolve(JSON.parse(body))))
+      expect(parsed.ok).toBe(true)
+      expect(parsed.verdict).toBeUndefined()
+    } finally {
+      await bridge.stop()
+    }
   })
 })
 

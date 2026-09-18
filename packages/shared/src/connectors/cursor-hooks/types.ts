@@ -27,6 +27,25 @@ export function isCursorHookEventName(value: string): value is CursorHookEventNa
   return (CURSOR_HOOK_EVENT_NAMES as readonly string[]).includes(value)
 }
 
+export const CURSOR_PERMISSION_HOOKS = [
+  'preToolUse',
+  'beforeShellExecution',
+  'beforeMCPExecution',
+  'beforeReadFile',
+] as const
+
+export type CursorPermissionHook = (typeof CURSOR_PERMISSION_HOOKS)[number]
+
+export function isCursorPermissionHook(name: string): boolean {
+  return (CURSOR_PERMISSION_HOOKS as readonly string[]).includes(name)
+}
+
+export interface CursorDecisionConfig {
+  baseUrl?: string
+  apiToken?: string
+  timeoutMs?: number
+}
+
 export interface CursorHookPayload {
   hook_event_name: string
   timestamp?: string

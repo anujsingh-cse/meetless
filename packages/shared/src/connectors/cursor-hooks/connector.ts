@@ -5,10 +5,12 @@ import { BaseConnector } from '../base.js'
 import type { ConnectorCapabilities } from '../../types/index.js'
 import { BridgeServer } from './bridge.js'
 import { HookInstaller } from './hook-installer.js'
+import type { CursorDecisionConfig } from './types.js'
 
 export interface CursorHooksConnectorOptions {
   workingDir: string
   hooksPath?: string
+  decision?: CursorDecisionConfig
 }
 
 const DEFAULT_HOOKS_PATH = path.join(
@@ -41,6 +43,7 @@ export class CursorHooksConnector extends BaseConnector {
     this.bridge = new BridgeServer({
       secret: this.secret,
       connectorVersion: this.version,
+      decision: options.decision,
     })
 
     this.bridge.onEvent((event) => this.emitEvent(event))
