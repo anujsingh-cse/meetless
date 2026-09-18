@@ -147,6 +147,11 @@ enum RuleAction {
   NOTIFY
 }
 
+enum RuleVerdict {
+  ALLOW
+  DENY
+}
+
 model Rule {
   id           String     @id @default(cuid())
   workspaceId  String
@@ -159,6 +164,7 @@ model Rule {
   connectorId  String?
   agentPattern String?
   action       RuleAction
+  decision     RuleVerdict?
   message      String?
   createdBy    String?
   createdAt    DateTime   @default(now())
@@ -181,6 +187,25 @@ model RuleHit {
   matchedOn   Json
   message     String?
   createdAt   DateTime @default(now())
+  @@index([sessionId, createdAt])
+  @@index([ruleId])
+  @@index([workspaceId, createdAt])
+}
+
+model RuleDecision {
+  id          String       @id @default(cuid())
+  ruleId      String
+  workspaceId String
+  sessionId   String
+  agentId     String
+  connectorId String
+  tool        String
+  path        String?
+  ruleName    String
+  verdict     RuleVerdict
+  matchedOn   Json
+  message     String?
+  createdAt   DateTime     @default(now())
   @@index([sessionId, createdAt])
   @@index([ruleId])
   @@index([workspaceId, createdAt])
