@@ -58,6 +58,14 @@ export class WSManager {
     this.broadcastToSession(sessionId, { type: 'rule_triggered', payload })
   }
 
+  broadcastDecisionPending(sessionId: string, payload: unknown) {
+    this.broadcastToSession(sessionId, { type: 'decision_pending', payload })
+  }
+
+  broadcastDecisionResolved(sessionId: string, payload: unknown) {
+    this.broadcastToSession(sessionId, { type: 'decision_resolved', payload })
+  }
+
   getSessionClients(sessionId: string): WSClient[] {
     const ids = this.sessionClients.get(sessionId)
     if (!ids) return []

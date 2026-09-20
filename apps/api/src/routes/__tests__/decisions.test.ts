@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import { buildApp } from '../../app.js'
 import { prisma } from '@meetless/database/client'
 
@@ -235,5 +235,148 @@ describe('POST /api/decisions/:pendingId/approve and deny', () => {
   it('unknown pendingId → 404', async () => {
     const res = await app.inject({ method: 'POST', url: '/api/decisions/no-such-id/approve', payload: {} })
     expect(res.statusCode).toBe(404)
+  })
+})
+
+describe('GET /api/sessions/:sessionId/rule-decisions', () => {
+  async function createAskPending() {
+    const { sessionId, workspaceId } = await createSession()
+    await prisma.rule.create({ data: { workspaceId, name: 'ask-prod', action: 'NOTIFY', decision: 'ASK', pathPattern: 'config/prod/**', message: 'Needs review' } })
+    const res = await app.inject({ method: 'POST', url: '/api/decisions', payload: { ...decisionBody(sessionId, 'config/prod/app.yaml'), pendingKey: `oc-${randSuffix()}` } })
+    return { sessionId, pendingId: JSON.parse(res.payload).pendingId as string }
+  }
+
+  it('returns pending decision rows for a session', async () => {
+    const { sessionId, pendingId } = await createAskPending()
+    const res = await app.inject({ method: 'GET', url: `/api/sessions/${sessionId}/rule-decisions` })
+    expect(res.statusCode).toBe(200)
+    const rows = JSON.parse(res.payload)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].id).toBe(pendingId)
+    expect(rows[0].status).toBe('PENDING')
+    expect(rows[0].verdict).toBe('ASK')
+    expect(rows[0].ruleName).toBe('ask-prod')
+  })
+
+  it('returns approved/denied rows with lifecycle fields', async () => {
+    const { sessionId, pendingId } = await createAskPending()
+    await app.inject({ method: 'POST', url: `/api/decisions/${pendingId}/approve`, payload: {} })
+    const res = await app.inject({ method: 'GET', url: `/api/sessions/${sessionId}/rule-decisions` })
+    const rows = JSON.parse(res.payload)
+    expect(rows[0].status).toBe('APPROVED')
+    expect(rows[0].resolutionMethod).toBe('api')
+    expect(rows[0].resolvedAt).toBeTruthy()
+  })
+
+  it('lazily expires overdue PENDING decisions on read (never implicit DENY, broadcast decision_resolved)', async () => {
+    const { sessionId, pendingId } = await createAskPending()
+    await prisma.ruleDecision.update({ where: { id: pendingId }, data: { expiresAt: new Date(Date.now() - 5_000) } })
+    const res = await app.inject({ method: 'GET', url: `/api/sessions/${sessionId}/rule-decisions` })
+    const rows = JSON.parse(res.payload)
+    expect(rows[0].status).toBe('EXPIRED')
+    expect(rows[0].resolutionMethod).toBe('timeout')
+  })
+
+  it('tolerates legacy Phase 3B rows (null status/pendingKey) in the same session listing', async () => {
+    const { sessionId, workspaceId } = await createSession()
+    await prisma.rule.create({ data: { workspaceId, name: 'deny-prod', action: 'NOTIFY', decision: 'DENY', pathPattern: 'config/prod/**' } })
+    // legacy-style row created directly (no lifecycle fields)
+    await prisma.ruleDecision.create({
+      data: {
+        ruleId: 'legacy-rule', workspaceId, sessionId, agentId: 'claude-1', connectorId: 'claude-code',
+        tool: 'edit_file', path: 'config/prod/app.yaml', ruleName: 'deny-prod', verdict: 'DENY',
+        matchedOn: { tool: null, pathPattern: 'config/prod/**', connectorId: null, agentPattern: null },
+      },
+    })
+    const res = await app.inject({ method: 'GET', url: `/api/sessions/${sessionId}/rule-decisions` })
+    const rows = JSON.parse(res.payload)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].status).toBeNull()
+    expect(rows[0].pendingKey).toBeNull()
+  })
+
+  it('returns rows ordered by createdAt desc, deterministic', async () => {
+    const { sessionId, workspaceId } = await createSession()
+    await prisma.rule.create({ data: { workspaceId, name: 'ask-1', action: 'NOTIFY', decision: 'ASK', pathPattern: 'config/**' } })
+    await prisma.rule.create({ data: { workspaceId, name: 'ask-2', action: 'NOTIFY', decision: 'ASK', pathPattern: 'config/**' } })
+    await app.inject({ method: 'POST', url: '/api/decisions', payload: { ...decisionBody(sessionId, 'config/a.yaml'), pendingKey: `k1-${randSuffix()}` } })
+    // small delay so createdAt differs deterministically
+    await new Promise((r) => setTimeout(r, 10))
+    await app.inject({ method: 'POST', url: '/api/decisions', payload: { ...decisionBody(sessionId, 'config/b.yaml'), pendingKey: `k2-${randSuffix()}` } })
+    const res = await app.inject({ method: 'GET', url: `/api/sessions/${sessionId}/rule-decisions` })
+    const rows = JSON.parse(res.payload)
+    expect(rows.length).toBeGreaterThanOrEqual(2)
+    for (let i = 1; i < rows.length; i++) {
+      expect(new Date(rows[i - 1].createdAt).getTime()).toBeGreaterThanOrEqual(new Date(rows[i].createdAt).getTime())
+    }
+  })
+
+  it('returns an empty array for a session with no decisions', async () => {
+    const { sessionId } = await createSession()
+    const res = await app.inject({ method: 'GET', url: `/api/sessions/${sessionId}/rule-decisions` })
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(res.payload)).toEqual([])
+  })
+})
+
+describe('decision lifecycle WebSocket emissions', () => {
+  async function createAskPending() {
+    const { sessionId, workspaceId } = await createSession()
+    await prisma.rule.create({ data: { workspaceId, name: 'ask-prod', action: 'NOTIFY', decision: 'ASK', pathPattern: 'config/prod/**', message: 'Needs review' } })
+    const res = await app.inject({ method: 'POST', url: '/api/decisions', payload: { ...decisionBody(sessionId, 'config/prod/app.yaml'), pendingKey: `oc-${randSuffix()}` } })
+    return { sessionId, pendingId: JSON.parse(res.payload).pendingId as string }
+  }
+
+  it('pending creation emits decision_pending', async () => {
+    const spy = vi.spyOn(app.wsManager, 'broadcastDecisionPending')
+    const { pendingId } = await createAskPending()
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect((spy.mock.calls[0][1] as { pendingId: string }).pendingId).toBe(pendingId)
+    spy.mockRestore()
+  })
+
+  it('approval emits decision_resolved; duplicate approve emits nothing extra', async () => {
+    const spy = vi.spyOn(app.wsManager, 'broadcastDecisionResolved')
+    const { pendingId } = await createAskPending()
+    await app.inject({ method: 'POST', url: `/api/decisions/${pendingId}/approve`, payload: {} })
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect((spy.mock.calls[0][1] as { status: string }).status).toBe('APPROVED')
+    await app.inject({ method: 'POST', url: `/api/decisions/${pendingId}/approve`, payload: {} })
+    expect(spy).toHaveBeenCalledTimes(1) // idempotent — no duplicate broadcast
+    spy.mockRestore()
+  })
+
+  it('denial emits decision_resolved DENIED', async () => {
+    const spy = vi.spyOn(app.wsManager, 'broadcastDecisionResolved')
+    const { pendingId } = await createAskPending()
+    await app.inject({ method: 'POST', url: `/api/decisions/${pendingId}/deny`, payload: {} })
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect((spy.mock.calls[0][1] as { status: string }).status).toBe('DENIED')
+    spy.mockRestore()
+  })
+
+  it('lazy expiration emits decision_resolved EXPIRED', async () => {
+    const spy = vi.spyOn(app.wsManager, 'broadcastDecisionResolved')
+    const { sessionId, pendingId } = await createAskPending()
+    await prisma.ruleDecision.update({ where: { id: pendingId }, data: { expiresAt: new Date(Date.now() - 5_000) } })
+    await app.inject({ method: 'GET', url: `/api/sessions/${sessionId}/rule-decisions` })
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect((spy.mock.calls[0][1] as { status: string }).status).toBe('EXPIRED')
+    spy.mockRestore()
+  })
+
+  it('delivery-failure marked decision is surfaced as EXPIRED on read (idempotent, no spurious broadcast)', async () => {
+    const { markDeliveryFailure } = await import('../../services/pending-decision-service.js')
+    const spy = vi.spyOn(app.wsManager, 'broadcastDecisionResolved')
+    const { sessionId, pendingId } = await createAskPending()
+    await markDeliveryFailure(app.prisma, pendingId)
+    await app.inject({ method: 'GET', url: `/api/sessions/${sessionId}/rule-decisions` })
+    // row is already EXPIRED via delivery_failure; sweep leaves it terminal
+    const row = await prisma.ruleDecision.findUnique({ where: { id: pendingId } })
+    expect(row?.status).toBe('EXPIRED')
+    expect(row?.resolutionMethod).toBe('delivery_failure')
+    // lazy sweep does not re-broadcast an already-terminal row (idempotent)
+    expect(spy).not.toHaveBeenCalled()
+    spy.mockRestore()
   })
 })

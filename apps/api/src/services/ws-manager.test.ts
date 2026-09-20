@@ -64,3 +64,37 @@ describe('broadcastRuleHit', () => {
     expect(() => m.broadcastRuleHit('s-absent', { id: 'x' })).not.toThrow()
   })
 })
+
+describe('decision lifecycle broadcasts', () => {
+  it('broadcasts decision_pending as a single-nested message', () => {
+    const send = vi.fn()
+    const fakeWs = { readyState: WebSocket.OPEN, send } as unknown as import('ws').WebSocket
+    const m = new WSManager()
+    m.add({ id: 'c1', sessionId: 's1', agentId: 'a1', ws: fakeWs, connectedAt: new Date() })
+
+    m.broadcastDecisionPending('s1', { pendingId: 'p1', sessionId: 's1', ruleId: 'r1' })
+
+    const sent = JSON.parse(send.mock.calls[0][0] as string)
+    expect(sent.type).toBe('decision_pending')
+    expect(sent.payload).toEqual({ pendingId: 'p1', sessionId: 's1', ruleId: 'r1' })
+  })
+
+  it('broadcasts decision_resolved as a single-nested message', () => {
+    const send = vi.fn()
+    const fakeWs = { readyState: WebSocket.OPEN, send } as unknown as import('ws').WebSocket
+    const m = new WSManager()
+    m.add({ id: 'c1', sessionId: 's1', agentId: 'a1', ws: fakeWs, connectedAt: new Date() })
+
+    m.broadcastDecisionResolved('s1', { pendingId: 'p1', sessionId: 's1', status: 'APPROVED' })
+
+    const sent = JSON.parse(send.mock.calls[0][0] as string)
+    expect(sent.type).toBe('decision_resolved')
+    expect(sent.payload).toEqual({ pendingId: 'p1', sessionId: 's1', status: 'APPROVED' })
+  })
+
+  it('does not throw when the session has no clients', () => {
+    const m = new WSManager()
+    expect(() => m.broadcastDecisionPending('s-absent', { pendingId: 'x' })).not.toThrow()
+    expect(() => m.broadcastDecisionResolved('s-absent', { pendingId: 'x', status: 'EXPIRED' })).not.toThrow()
+  })
+})

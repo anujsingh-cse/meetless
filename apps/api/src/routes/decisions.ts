@@ -2,7 +2,7 @@ import { FastifyPluginAsync } from 'fastify'
 import { Prisma } from '@prisma/client'
 import { randomUUID } from 'node:crypto'
 import { decide } from '../services/decision-service.js'
-import { createPendingDecision, resolvePending, expireIfNeeded } from '../services/pending-decision-service.js'
+import { createPendingDecision, resolvePending, expireIfNeeded, listSessionDecisions } from '../services/pending-decision-service.js'
 
 interface DecisionBody {
   sessionId: string
@@ -23,6 +23,32 @@ const decisionBodySchema = {
     tool: { type: 'string' },
     params: { type: 'object', additionalProperties: true },
     pendingKey: { type: 'string' },
+  },
+} as const
+
+const ruleDecisionResponseSchema = {
+  type: 'object',
+  required: ['id', 'sessionId', 'verdict'],
+  properties: {
+    id: { type: 'string' },
+    sessionId: { type: 'string' },
+    workspaceId: { type: 'string' },
+    agentId: { type: 'string' },
+    connectorId: { type: 'string' },
+    tool: { type: 'string' },
+    path: { type: ['string', 'null'] },
+    ruleId: { type: 'string' },
+    ruleName: { type: 'string' },
+    verdict: { type: 'string', enum: ['ALLOW', 'DENY', 'ASK'] },
+    matchedOn: { type: 'object', additionalProperties: true },
+    message: { type: ['string', 'null'] },
+    status: { type: ['string', 'null'] },
+    pendingKey: { type: ['string', 'null'] },
+    expiresAt: { type: ['string', 'null'], format: 'date-time' },
+    resolvedAt: { type: ['string', 'null'], format: 'date-time' },
+    resolvedBy: { type: ['string', 'null'] },
+    resolutionMethod: { type: ['string', 'null'] },
+    createdAt: { type: 'string', format: 'date-time' },
   },
 } as const
 
@@ -110,6 +136,18 @@ export const decisionRoutes: FastifyPluginAsync = async (app) => {
           message: outcome.winning.message,
           pendingKey: body.pendingKey ?? randomUUID(),
         })
+        app.wsManager.broadcastDecisionPending(body.sessionId, {
+          pendingId: pending.pendingId,
+          sessionId: body.sessionId,
+          agentId: body.agentId,
+          connectorId: body.connectorId,
+          tool: body.tool,
+          path: typeof body.params?.path === 'string' ? body.params.path : null,
+          ruleId: outcome.winning.ruleId,
+          ruleName: outcome.winning.ruleName,
+          reason: outcome.reason ?? null,
+          expiresAt: pending.expiresAt.toISOString(),
+        })
         return {
           decision: 'ask',
           pendingId: pending.pendingId,
@@ -180,6 +218,10 @@ export const decisionRoutes: FastifyPluginAsync = async (app) => {
     await expireIfNeeded(app.prisma, pendingId)
     const result = await resolvePending(app.prisma, pendingId, 'APPROVED', (req.user?.userId ?? 'dev-user') as string, 'api')
     if (!result) return reply.code(404).send({ error: 'Pending decision not found' })
+    if (result.changed) {
+      const row = await app.prisma.ruleDecision.findUnique({ where: { id: pendingId } })
+      if (row) app.wsManager.broadcastDecisionResolved(row.sessionId, { pendingId, sessionId: row.sessionId, status: result.status, resolvedAt: result.resolvedAt?.toISOString() ?? null, resolvedBy: result.resolvedBy })
+    }
     return {
       pendingId,
       status: result.status,
@@ -199,11 +241,67 @@ export const decisionRoutes: FastifyPluginAsync = async (app) => {
     await expireIfNeeded(app.prisma, pendingId)
     const result = await resolvePending(app.prisma, pendingId, 'DENIED', (req.user?.userId ?? 'dev-user') as string, 'api')
     if (!result) return reply.code(404).send({ error: 'Pending decision not found' })
+    if (result.changed) {
+      const row = await app.prisma.ruleDecision.findUnique({ where: { id: pendingId } })
+      if (row) app.wsManager.broadcastDecisionResolved(row.sessionId, { pendingId, sessionId: row.sessionId, status: result.status, resolvedAt: result.resolvedAt?.toISOString() ?? null, resolvedBy: result.resolvedBy })
+    }
     return {
       pendingId,
       status: result.status,
       resolvedAt: result.resolvedAt?.toISOString() ?? null,
       resolvedBy: result.resolvedBy,
     }
+  })
+
+  app.get('/sessions/:sessionId/rule-decisions', {
+    schema: {
+      params: { type: 'object', required: ['sessionId'], properties: { sessionId: { type: 'string' } } },
+      response: { 200: { type: 'array', items: ruleDecisionResponseSchema } },
+    },
+  }, async (req) => {
+    const { sessionId } = req.params as { sessionId: string }
+
+    // Lazy expiry: sweep overdue PENDING rows to EXPIRED (never DENY), broadcast decision_resolved.
+    const now = new Date()
+    const pending = await app.prisma.ruleDecision.findMany({
+      where: { sessionId, status: 'PENDING' },
+    })
+    for (const row of pending) {
+      if (row.expiresAt !== null && row.expiresAt <= now) {
+        const updated = await expireIfNeeded(app.prisma, row.id)
+        if (updated && updated.status === 'EXPIRED') {
+          app.wsManager.broadcastDecisionResolved(sessionId, {
+            pendingId: updated.id,
+            sessionId,
+            status: 'EXPIRED',
+            resolvedAt: updated.resolvedAt?.toISOString() ?? null,
+            resolvedBy: null,
+          })
+        }
+      }
+    }
+
+    const rows = await listSessionDecisions(app.prisma, sessionId)
+    return rows.map((d) => ({
+      id: d.id,
+      sessionId: d.sessionId,
+      workspaceId: d.workspaceId,
+      agentId: d.agentId,
+      connectorId: d.connectorId,
+      tool: d.tool,
+      path: d.path,
+      ruleId: d.ruleId,
+      ruleName: d.ruleName,
+      verdict: d.verdict,
+      matchedOn: d.matchedOn,
+      message: d.message ?? null,
+      status: d.status ?? null,
+      pendingKey: d.pendingKey ?? null,
+      expiresAt: d.expiresAt?.toISOString() ?? null,
+      resolvedAt: d.resolvedAt?.toISOString() ?? null,
+      resolvedBy: d.resolvedBy ?? null,
+      resolutionMethod: d.resolutionMethod ?? null,
+      createdAt: d.createdAt.toISOString(),
+    }))
   })
 }
