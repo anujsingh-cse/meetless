@@ -114,3 +114,126 @@ describe('POST /api/decisions', () => {
     }
   })
 })
+
+describe('POST /api/decisions — ASK', () => {
+  it('returns an ask verdict with a pendingId when an ASK rule matches', async () => {
+    const { sessionId, workspaceId } = await createSession()
+    const rule = await prisma.rule.create({ data: { workspaceId, name: 'ask-prod', action: 'NOTIFY', decision: 'ASK', pathPattern: 'config/prod/**', message: 'Needs review' } })
+    const res = await app.inject({ method: 'POST', url: '/api/decisions', payload: { ...decisionBody(sessionId, 'config/prod/app.yaml'), pendingKey: 'oc-req-1' } })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload)
+    expect(body.decision).toBe('ask')
+    expect(body.pendingId).toMatch(/./)
+    expect(body.ruleId).toBe(rule.id)
+    expect(body.ruleName).toBe('ask-prod')
+    expect(body.reason).toBe('Needs review')
+    expect(body.expiresAt).toMatch(/./)
+
+    const row = await prisma.ruleDecision.findFirst({ where: { sessionId } })
+    expect(row?.status).toBe('PENDING')
+    expect(row?.verdict).toBe('ASK')
+    expect(row?.pendingKey).toBe('oc-req-1')
+  })
+
+  it('duplicate ASK for the same (connector, session, pendingKey) returns the existing pendingId', async () => {
+    const { sessionId, workspaceId } = await createSession()
+    await prisma.rule.create({ data: { workspaceId, name: 'ask-prod', action: 'NOTIFY', decision: 'ASK', pathPattern: 'config/prod/**' } })
+    const payload = { ...decisionBody(sessionId, 'config/prod/app.yaml'), pendingKey: 'oc-req-1' }
+    const a = await app.inject({ method: 'POST', url: '/api/decisions', payload })
+    const b = await app.inject({ method: 'POST', url: '/api/decisions', payload })
+    expect(JSON.parse(a.payload).pendingId).toBe(JSON.parse(b.payload).pendingId)
+    expect(await prisma.ruleDecision.count({ where: { sessionId } })).toBe(1)
+  })
+
+  it('deny still wins over ask (precedence regression)', async () => {
+    const { sessionId, workspaceId } = await createSession()
+    await prisma.rule.create({ data: { workspaceId, name: 'ask', action: 'NOTIFY', decision: 'ASK', pathPattern: 'config/**', priority: 10 } })
+    await prisma.rule.create({ data: { workspaceId, name: 'deny', action: 'NOTIFY', decision: 'DENY', pathPattern: 'config/prod/**', priority: 20 } })
+    const res = await app.inject({ method: 'POST', url: '/api/decisions', payload: { ...decisionBody(sessionId, 'config/prod/x'), pendingKey: 'oc-req-x' } })
+    expect(JSON.parse(res.payload).decision).toBe('deny')
+    expect(await prisma.ruleDecision.count({ where: { sessionId, status: 'PENDING' } })).toBe(0)
+  })
+})
+
+describe('POST /api/decisions/:pendingId/approve and deny', () => {
+  async function createAskPending() {
+    const { sessionId, workspaceId } = await createSession()
+    await prisma.rule.create({ data: { workspaceId, name: 'ask-prod', action: 'NOTIFY', decision: 'ASK', pathPattern: 'config/prod/**', message: 'Needs review' } })
+    const res = await app.inject({ method: 'POST', url: '/api/decisions', payload: { ...decisionBody(sessionId, 'config/prod/app.yaml'), pendingKey: `oc-${randSuffix()}` } })
+    const body = JSON.parse(res.payload)
+    return { sessionId, pendingId: body.pendingId as string }
+  }
+
+  it('approve: PENDING → APPROVED with resolution metadata', async () => {
+    const { pendingId } = await createAskPending()
+    const res = await app.inject({ method: 'POST', url: `/api/decisions/${pendingId}/approve`, payload: {} })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload)
+    expect(body.status).toBe('APPROVED')
+    expect(body.resolvedAt).toBeTruthy()
+    const row = await prisma.ruleDecision.findUnique({ where: { id: pendingId } })
+    expect(row?.status).toBe('APPROVED')
+    expect(row?.resolutionMethod).toBe('api')
+    expect(row?.resolvedBy).not.toBeNull()
+  })
+
+  it('deny: PENDING → DENIED', async () => {
+    const { pendingId } = await createAskPending()
+    const res = await app.inject({ method: 'POST', url: `/api/decisions/${pendingId}/deny`, payload: {} })
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(res.payload).status).toBe('DENIED')
+  })
+
+  it('repeated approve is idempotent (terminal no-op)', async () => {
+    const { pendingId } = await createAskPending()
+    const first = await app.inject({ method: 'POST', url: `/api/decisions/${pendingId}/approve`, payload: {} })
+    const again = await app.inject({ method: 'POST', url: `/api/decisions/${pendingId}/approve`, payload: {} })
+    expect(JSON.parse(again.payload).status).toBe('APPROVED')
+    expect(JSON.parse(again.payload).resolvedAt).toBe(JSON.parse(first.payload).resolvedAt)
+    const row = await prisma.ruleDecision.findUnique({ where: { id: pendingId } })
+    expect(row?.resolvedBy).toBe(JSON.parse(first.payload).resolvedBy)
+  })
+
+  it('repeated deny is idempotent', async () => {
+    const { pendingId } = await createAskPending()
+    const first = await app.inject({ method: 'POST', url: `/api/decisions/${pendingId}/deny`, payload: {} })
+    const again = await app.inject({ method: 'POST', url: `/api/decisions/${pendingId}/deny`, payload: {} })
+    expect(JSON.parse(again.payload).status).toBe('DENIED')
+    expect(JSON.parse(again.payload).resolvedAt).toBe(JSON.parse(first.payload).resolvedAt)
+  })
+
+  it('approve after DENIED does not reopen', async () => {
+    const { pendingId } = await createAskPending()
+    await app.inject({ method: 'POST', url: `/api/decisions/${pendingId}/deny`, payload: {} })
+    const res = await app.inject({ method: 'POST', url: `/api/decisions/${pendingId}/approve`, payload: {} })
+    expect(JSON.parse(res.payload).status).toBe('DENIED')
+    const row = await prisma.ruleDecision.findUnique({ where: { id: pendingId } })
+    expect(row?.status).toBe('DENIED')
+    expect(row?.resolutionMethod).toBe('api')
+  })
+
+  it('deny after APPROVED does not reopen', async () => {
+    const { pendingId } = await createAskPending()
+    await app.inject({ method: 'POST', url: `/api/decisions/${pendingId}/approve`, payload: {} })
+    const res = await app.inject({ method: 'POST', url: `/api/decisions/${pendingId}/deny`, payload: {} })
+    expect(JSON.parse(res.payload).status).toBe('APPROVED')
+    const row = await prisma.ruleDecision.findUnique({ where: { id: pendingId } })
+    expect(row?.status).toBe('APPROVED')
+    expect(row?.resolutionMethod).toBe('api')
+  })
+
+  it('resolution after EXPIRED does not reopen (never implicit DENY)', async () => {
+    const { pendingId } = await createAskPending()
+    await prisma.ruleDecision.update({ where: { id: pendingId }, data: { status: 'EXPIRED', resolutionMethod: 'timeout', resolvedAt: new Date() } })
+    const res = await app.inject({ method: 'POST', url: `/api/decisions/${pendingId}/approve`, payload: {} })
+    expect(JSON.parse(res.payload).status).toBe('EXPIRED')
+    const row = await prisma.ruleDecision.findUnique({ where: { id: pendingId } })
+    expect(row?.status).toBe('EXPIRED')
+    expect(row?.resolutionMethod).toBe('timeout')
+  })
+
+  it('unknown pendingId → 404', async () => {
+    const res = await app.inject({ method: 'POST', url: '/api/decisions/no-such-id/approve', payload: {} })
+    expect(res.statusCode).toBe(404)
+  })
+})

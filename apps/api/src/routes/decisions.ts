@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from 'fastify'
 import { Prisma } from '@prisma/client'
 import { randomUUID } from 'node:crypto'
 import { decide } from '../services/decision-service.js'
+import { createPendingDecision, resolvePending, expireIfNeeded } from '../services/pending-decision-service.js'
 
 interface DecisionBody {
   sessionId: string
@@ -9,6 +10,7 @@ interface DecisionBody {
   connectorId: string
   tool: string
   params: Record<string, unknown>
+  pendingKey?: string
 }
 
 const decisionBodySchema = {
@@ -20,6 +22,7 @@ const decisionBodySchema = {
     connectorId: { type: 'string' },
     tool: { type: 'string' },
     params: { type: 'object', additionalProperties: true },
+    pendingKey: { type: 'string' },
   },
 } as const
 
@@ -27,12 +30,42 @@ const decisionResponseSchema = {
   type: 'object',
   required: ['decision'],
   properties: {
-    decision: { type: 'string', enum: ['allow', 'deny'] },
+    decision: { type: 'string', enum: ['allow', 'deny', 'ask'] },
     ruleId: { type: 'string' },
     ruleName: { type: 'string' },
     matchedOn: { type: 'object', additionalProperties: true },
     reason: { type: ['string', 'null'] },
+    pendingId: { type: 'string' },
+    expiresAt: { type: 'string', format: 'date-time' },
   },
+} as const
+
+const resolveParamsSchema = {
+  type: 'object',
+  required: ['pendingId'],
+  properties: { pendingId: { type: 'string' } },
+} as const
+
+const resolutionBodySchema = {
+  type: 'object',
+  properties: {},
+} as const
+
+const resolutionResponseSchema = {
+  type: 'object',
+  required: ['pendingId', 'status'],
+  properties: {
+    pendingId: { type: 'string' },
+    status: { type: 'string', enum: ['PENDING', 'APPROVED', 'DENIED', 'EXPIRED'] },
+    resolvedAt: { type: ['string', 'null'], format: 'date-time' },
+    resolvedBy: { type: ['string', 'null'] },
+  },
+} as const
+
+const errorResponseSchema = {
+  type: 'object',
+  required: ['error'],
+  properties: { error: { type: 'string' } },
 } as const
 
 export const decisionRoutes: FastifyPluginAsync = async (app) => {
@@ -41,7 +74,7 @@ export const decisionRoutes: FastifyPluginAsync = async (app) => {
       body: decisionBodySchema,
       response: {
         200: decisionResponseSchema,
-        400: { type: 'object', required: ['error'], properties: { error: { type: 'string' } } },
+        400: errorResponseSchema,
       },
     },
   }, async (req, reply) => {
@@ -59,6 +92,33 @@ export const decisionRoutes: FastifyPluginAsync = async (app) => {
         { agentId: body.agentId, connectorId: body.connectorId, tool: body.tool, params: body.params },
         rules
       )
+
+      // ASK: create a pending decision instead of an immediate verdict. Audit rows are
+      // surfaced through the pending RuleDecision (status PENDING), not as terminal matches.
+      if (outcome.decision === 'ask' && outcome.winning) {
+        const pending = await createPendingDecision(app.prisma, {
+          workspaceId: session.workspaceId,
+          sessionId: body.sessionId,
+          agentId: body.agentId,
+          connectorId: body.connectorId,
+          tool: body.tool,
+          path: typeof body.params?.path === 'string' ? body.params.path : null,
+          ruleId: outcome.winning.ruleId,
+          ruleName: outcome.winning.ruleName,
+          verdict: 'ASK',
+          matchedOn: outcome.winning.matchedOn as unknown as Prisma.InputJsonValue,
+          message: outcome.winning.message,
+          pendingKey: body.pendingKey ?? randomUUID(),
+        })
+        return {
+          decision: 'ask',
+          pendingId: pending.pendingId,
+          ruleId: outcome.winning.ruleId,
+          ruleName: outcome.winning.ruleName,
+          reason: outcome.reason ?? null,
+          expiresAt: pending.expiresAt.toISOString(),
+        }
+      }
 
       if (outcome.matches.length > 0) {
         const firedAt = new Date()
@@ -106,6 +166,44 @@ export const decisionRoutes: FastifyPluginAsync = async (app) => {
       // failures outside this try/catch (Fastify's default error handler).
       app.log.error({ err, workspaceId: session.workspaceId, sessionId: body.sessionId, tool: body.tool }, 'decision evaluation failed; fail-open allow')
       return { decision: 'allow' }
+    }
+  })
+
+  app.post('/decisions/:pendingId/approve', {
+    schema: {
+      params: resolveParamsSchema,
+      body: resolutionBodySchema,
+      response: { 200: resolutionResponseSchema, 404: errorResponseSchema },
+    },
+  }, async (req, reply) => {
+    const { pendingId } = req.params as { pendingId: string }
+    await expireIfNeeded(app.prisma, pendingId)
+    const result = await resolvePending(app.prisma, pendingId, 'APPROVED', (req.user?.userId ?? 'dev-user') as string, 'api')
+    if (!result) return reply.code(404).send({ error: 'Pending decision not found' })
+    return {
+      pendingId,
+      status: result.status,
+      resolvedAt: result.resolvedAt?.toISOString() ?? null,
+      resolvedBy: result.resolvedBy,
+    }
+  })
+
+  app.post('/decisions/:pendingId/deny', {
+    schema: {
+      params: resolveParamsSchema,
+      body: resolutionBodySchema,
+      response: { 200: resolutionResponseSchema, 404: errorResponseSchema },
+    },
+  }, async (req, reply) => {
+    const { pendingId } = req.params as { pendingId: string }
+    await expireIfNeeded(app.prisma, pendingId)
+    const result = await resolvePending(app.prisma, pendingId, 'DENIED', (req.user?.userId ?? 'dev-user') as string, 'api')
+    if (!result) return reply.code(404).send({ error: 'Pending decision not found' })
+    return {
+      pendingId,
+      status: result.status,
+      resolvedAt: result.resolvedAt?.toISOString() ?? null,
+      resolvedBy: result.resolvedBy,
     }
   })
 }
