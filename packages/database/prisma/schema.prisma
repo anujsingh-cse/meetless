@@ -150,6 +150,14 @@ enum RuleAction {
 enum RuleVerdict {
   ALLOW
   DENY
+  ASK
+}
+
+enum RuleDecisionStatus {
+  PENDING
+  APPROVED
+  DENIED
+  EXPIRED
 }
 
 model Rule {
@@ -193,20 +201,27 @@ model RuleHit {
 }
 
 model RuleDecision {
-  id          String       @id @default(cuid())
-  ruleId      String
-  workspaceId String
-  sessionId   String
-  agentId     String
-  connectorId String
-  tool        String
-  path        String?
-  ruleName    String
-  verdict     RuleVerdict
-  matchedOn   Json
-  message     String?
-  createdAt   DateTime     @default(now())
+  id               String                @id @default(cuid())
+  ruleId           String
+  workspaceId      String
+  sessionId        String
+  agentId          String
+  connectorId      String
+  tool             String
+  path             String?
+  ruleName         String
+  verdict          RuleVerdict
+  matchedOn        Json
+  message          String?
+  status           RuleDecisionStatus?
+  pendingKey       String?
+  expiresAt        DateTime?
+  resolvedAt       DateTime?
+  resolvedBy       String?
+  resolutionMethod String?
+  createdAt        DateTime              @default(now())
   @@index([sessionId, createdAt])
   @@index([ruleId])
   @@index([workspaceId, createdAt])
+  @@index([connectorId, sessionId, pendingKey])
 }
