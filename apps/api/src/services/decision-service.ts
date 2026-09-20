@@ -12,16 +12,16 @@ export interface RuleDecisionMatch {
 }
 
 export interface DecisionResult {
-  decision: 'allow' | 'deny'
+  decision: 'allow' | 'deny' | 'ask'
   matches: RuleDecisionMatch[] // all matching prevention rules, deterministic order
-  winning?: RuleDecisionMatch  // first DENY in deterministic order (highest priority)
-  reason?: string | null       // winning deny's message; default when null
+  winning?: RuleDecisionMatch  // first DENY, else first ASK, by deterministic order (highest priority)
+  reason?: string | null       // winning rule's message; default reason when DENY has none
 }
 
 // Only rules explicitly participating in prevention (decision set) are considered.
-// LOG/NOTIFY rules and rules with decision === null/undefined never deny.
+// LOG/NOTIFY rules and rules with decision === null/undefined never deny or ask.
 export function selectPreventionRules(rules: RuleLike[]): RuleLike[] {
-  return rules.filter((r) => r.decision === 'ALLOW' || r.decision === 'DENY')
+  return rules.filter((r) => r.decision === 'ALLOW' || r.decision === 'DENY' || r.decision === 'ASK')
 }
 
 export function decide(event: RuleEvaluableEvent, rules: RuleLike[]): DecisionResult {
@@ -34,13 +34,22 @@ export function decide(event: RuleEvaluableEvent, rules: RuleLike[]): DecisionRe
     matchedOn: r.matchedOn,
     message: r.message,
   }))
-  const winning = matches.find((m) => m.verdict === 'DENY')
-  if (winning) {
+  const deny = matches.find((m) => m.verdict === 'DENY')
+  if (deny) {
     return {
       decision: 'deny',
       matches,
-      winning,
-      reason: winning.message ?? `${DEFAULT_DENY_REASON_PREFIX} ${winning.ruleName}`,
+      winning: deny,
+      reason: deny.message ?? `${DEFAULT_DENY_REASON_PREFIX} ${deny.ruleName}`,
+    }
+  }
+  const ask = matches.find((m) => m.verdict === 'ASK')
+  if (ask) {
+    return {
+      decision: 'ask',
+      matches,
+      winning: ask,
+      reason: ask.message ?? null,
     }
   }
   return { decision: 'allow', matches }

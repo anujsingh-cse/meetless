@@ -78,4 +78,42 @@ describe('decide', () => {
     expect(res.decision).toBe('allow')
     expect(res.matches).toHaveLength(0)
   })
+
+  it('ASK rule produces an ask verdict', () => {
+    const ask = base({ id: 'ask', decision: 'ASK', pathPattern: 'config/**' })
+    const res = decide(pre(), [ask])
+    expect(res.decision).toBe('ask')
+    expect(res.winning?.ruleId).toBe('ask')
+  })
+
+  it('DENY beats ASK', () => {
+    const deny = base({ id: 'd', decision: 'DENY', pathPattern: 'config/**', priority: 20 })
+    const ask = base({ id: 'a', decision: 'ASK', pathPattern: 'config/**', priority: 10 })
+    const res = decide(pre(), [deny, ask])
+    expect(res.decision).toBe('deny')
+    expect(res.winning?.ruleId).toBe('d')
+  })
+
+  it('ASK beats ALLOW', () => {
+    const ask = base({ id: 'a', decision: 'ASK', pathPattern: 'config/**', priority: 20 })
+    const allow = base({ id: 'o', decision: 'ALLOW', pathPattern: 'config/**', priority: 10 })
+    const res = decide(pre(), [allow, ask])
+    expect(res.decision).toBe('ask')
+    expect(res.winning?.ruleId).toBe('a')
+  })
+
+  it('multiple matching rules preserve deterministic ordering with ASK present', () => {
+    const a = base({ id: 'z', decision: 'ASK', pathPattern: 'config/**', priority: 100 })
+    const b = base({ id: 'y', decision: 'DENY', pathPattern: 'config/**', priority: 10 })
+    const res = decide(pre(), [a, b])
+    expect(res.matches.map((m) => m.ruleId)).toEqual(['y', 'z'])
+    expect(res.decision).toBe('deny')
+  })
+
+  it('non-prevention rules produce no ask', () => {
+    const obs = base({ id: 'o', decision: null, pathPattern: 'config/**' })
+    const res = decide(pre(), [obs])
+    expect(res.decision).toBe('allow')
+    expect(res.matches).toHaveLength(0)
+  })
 })

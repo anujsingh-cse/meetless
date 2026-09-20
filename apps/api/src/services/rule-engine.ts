@@ -2,7 +2,7 @@ import picomatch from 'picomatch'
 
 export type RuleAction = 'LOG' | 'NOTIFY'
 
-export type RuleVerdict = 'ALLOW' | 'DENY'
+export type RuleVerdict = 'ALLOW' | 'DENY' | 'ASK'
 
 // Narrow shared evaluation contract. A full NormalizedAgentEvent is a valid
 // superset: it has agentId, connectorId, tool, and params (params is `unknown`
