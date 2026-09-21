@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Meetless logo">
+  <g fill="none" stroke="#24292f" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <!-- three agent nodes converging on a central meeting point -->
+    <circle cx="26" cy="28" r="9"/>
+    <circle cx="102" cy="28" r="9"/>
+    <circle cx="64" cy="20" r="9"/>
+    <!-- paths from each node to the shared center -->
+    <path d="M32 34 L58 58"/>
+    <path d="M96 34 L70 58"/>
+    <path d="M64 29 L64 58"/>
+    <!-- central meeting point: a rounded square (the shared workspace) -->
+    <rect x="48" y="58" width="32" height="32" rx="7"/>
+    <!-- a single coordinated path leaving the workspace: the letter M -->
+    <path d="M56 90 L56 104 L64 94 L72 104 L72 90"/>
+  </g>
+</svg>
