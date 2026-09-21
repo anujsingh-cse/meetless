@@ -1,9 +1,10 @@
-import type { Plugin } from '@opencode-ai/plugin'
+import type { Plugin, PluginInput } from '@opencode-ai/plugin'
 import { normalizeOpenCodeEvent } from './normalizer.js'
 import { emitToMeetless } from './emitter.js'
 import { loadConfig } from './config.js'
 import type { PluginConfig } from './config.js'
 import { requestDecision, normalizePendingToolCall } from './decision.js'
+import { createAsk, waitForResolution } from './approval.js'
 import { OPENCODE_CONNECTOR_VERSION, type OpenCodeEventInput } from './types.js'
 
 // Build an OpenCodeEventInput from the documented tool.execute.after hook signature.
@@ -72,10 +73,13 @@ function resolveAgentId(config: PluginConfig, sessionId: string): string {
   return config.agentId ?? `opencode-${sessionId.slice(0, 8)}`
 }
 
-export const MeetlessPlugin: Plugin = async () => {
+export const MeetlessPlugin: Plugin = async ({ client }: PluginInput) => {
   const config = loadConfig(process.env as Record<string, string | undefined>)
   const deduper = new PathDeduper(1000)
   let currentSession = ''
+  // permissionID → Meetless pendingId (in-process; rebuilt on restart via server idempotency)
+  const pendingByPermission = new Map<string, string>()
+  const replied = new Set<string>()
 
   async function forward(existing: OpenCodeEventInput): Promise<void> {
     if (!existing.sessionId) existing = { ...existing, sessionId: currentSession }
@@ -89,6 +93,50 @@ export const MeetlessPlugin: Plugin = async () => {
     const key = `${normalized.sessionId}|${String(normalized.params.path)}`
     if (!deduper.shouldEmit(key)) return
     await emitToMeetless(config, normalized)
+  }
+
+  // Asynchronous ASK lifecycle: create/find the pending decision, poll for a
+  // resolution, then reply once via the OpenCode permission API. EXPIRED and
+  // TIMEOUT produce NO reply (fail-open, no implicit deny).
+  async function handlePermissionAsk(permission: {
+    id: string
+    sessionID: string
+    callID?: string
+    type?: string
+    pattern?: string | Array<string>
+  }): Promise<void> {
+    const permissionID = permission.id
+    const sessionId = String(permission.sessionID)
+    if (!permissionID || !sessionId) return
+    if (replied.has(permissionID)) return
+
+    let pendingId = pendingByPermission.get(permissionID)
+    if (!pendingId) {
+      const params: Record<string, unknown> = {}
+      const pattern = permission.pattern
+      const path = Array.isArray(pattern) ? pattern[0] : pattern
+      if (typeof path === 'string' && path.length > 0) params.path = path
+      const created = await createAsk(config, {
+        sessionId,
+        agentId: resolveAgentId(config, sessionId),
+        connectorId: 'opencode',
+        tool: 'edit_file',
+        params,
+        pendingKey: permissionID,
+      })
+      pendingId = created.pendingId
+      pendingByPermission.set(permissionID, pendingId)
+    }
+
+    const outcome = await waitForResolution(config, sessionId, pendingId)
+    if (outcome === 'APPROVED' || outcome === 'DENIED') {
+      if (replied.has(permissionID)) return
+      await client.postSessionIdPermissionsPermissionId({
+        path: { id: sessionId, permissionID },
+        body: { response: outcome === 'APPROVED' ? 'once' : 'reject' },
+      })
+      replied.add(permissionID)
+    }
   }
 
   return {
@@ -117,6 +165,23 @@ export const MeetlessPlugin: Plugin = async () => {
       if (event?.sessionID) currentSession = String(event.sessionID)
       if (event?.type === 'file.edited') {
         await forward(buildInputFromFileEvent(event))
+      }
+      if (event?.type === 'permission.updated') {
+        const props = event.properties as {
+          id?: string
+          sessionID?: string
+          callID?: string
+          type?: string
+          pattern?: string | Array<string>
+        }
+        if (!props?.id || !props?.sessionID) return
+        void handlePermissionAsk({
+          id: props.id,
+          sessionID: props.sessionID,
+          callID: props.callID,
+          type: props.type,
+          pattern: props.pattern,
+        })
       }
     },
   }
